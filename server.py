@@ -19,6 +19,8 @@ server exposes items (non-location entities), locations, and tags.
 """
 from __future__ import annotations
 
+import datetime
+import functools
 import os
 import sys
 import mimetypes
@@ -27,6 +29,7 @@ from typing import Any, Optional
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 __version__ = "0.9.0"
 
@@ -53,6 +56,12 @@ _load_env_file()
 HOMEBOX_URL = os.environ.get("HOMEBOX_URL", "http://localhost:7745").rstrip("/")
 HOMEBOX_TOKEN = os.environ.get("HOMEBOX_TOKEN", "")
 API = f"{HOMEBOX_URL}/api/v1"
+# Optional: the name of one custom field treated as a stable item identifier —
+# items can be looked up by it, and summaries surface it. Unset = items resolve
+# by assetId/name only.
+HOMEBOX_ALIAS_FIELD = os.environ.get("HOMEBOX_ALIAS_FIELD", "").strip()
+# Optional: where generate_label / qrcode save output. Default: CWD.
+HOMEBOX_LABEL_DIR = os.environ.get("HOMEBOX_LABEL_DIR", "").strip()
 
 if not HOMEBOX_TOKEN:
     sys.stderr.write(
@@ -67,6 +76,70 @@ _client = httpx.Client(
 )
 
 mcp = FastMCP("homebox")
+
+
+# ---------------------------------------------------------------------------
+# Version guard + error surfacing
+# ---------------------------------------------------------------------------
+_MIN_VERSION = (0, 26)
+_version_checked = False
+_version_error: Optional[str] = None
+
+
+def _check_min_version() -> None:
+    """One-time guard: this server needs the unified-entities API (Homebox
+    >= 0.26, the sysadminsmedia fork). Checked lazily on the first tool call so
+    the MCP handshake can't fail. Fails open if /status is unreachable or
+    unparsable — the real call's own error is more informative than a guess."""
+    global _version_checked, _version_error
+    if not _version_checked:
+        _version_checked = True
+        try:
+            build = (_get("/status") or {}).get("build") or {}
+            ver = (build.get("version") or "").lstrip("v")
+            parts = tuple(int(p) for p in ver.split(".")[:2])
+            if len(parts) == 2 and parts < _MIN_VERSION:
+                _version_error = (
+                    f"this server requires Homebox >= 0.26 (the sysadminsmedia "
+                    f"fork at homebox.software); your instance reports v{ver}, "
+                    f"whose pre-0.26 API (/items, /locations, /labels) is "
+                    f"incompatible."
+                )
+        except Exception:
+            pass
+    if _version_error:
+        raise ToolError(_version_error)
+
+
+def _tool_errors(fn):
+    """Turn transport/API failures into legible tool errors (status + Homebox's
+    response body, which says *why*) instead of raw tracebacks, and run the
+    one-time version guard. Domain errors (not found, ambiguous, bad args) stay
+    as {"error": ...} returns from the tools themselves."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        _check_min_version()
+        try:
+            return fn(*args, **kwargs)
+        except ToolError:
+            raise
+        except httpx.HTTPStatusError as e:
+            detail = ""
+            try:
+                detail = (e.response.text or "").strip()[:500]
+            except Exception:
+                pass
+            raise ToolError(
+                f"Homebox API error {e.response.status_code} on "
+                f"{e.request.method} {e.request.url.path}"
+                + (f": {detail}" if detail else "")
+            ) from e
+        except httpx.RequestError as e:
+            raise ToolError(
+                f"cannot reach Homebox at {HOMEBOX_URL}: "
+                f"{e.__class__.__name__}: {e}"
+            ) from e
+    return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +161,14 @@ def _put(path: str, body: dict) -> Any:
     r = _client.put(path, json=body)
     r.raise_for_status()
     return r.json() if r.content else None
+
+
+def _rfc3339(d: str) -> str:
+    """Normalize a YYYY-MM-DD date (or full timestamp) to an RFC3339 string."""
+    d = d.strip()
+    if "T" in d:
+        return d
+    return f"{d}T00:00:00Z"
 
 
 def _attachment_title(title: str) -> str:
@@ -206,9 +287,10 @@ def _summarize(entity: dict, with_path: bool = False) -> dict:
         "id": entity.get("id"),
         "assetId": entity.get("assetId") or None,
         "name": entity.get("name"),
-        "item_id": _field(entity, "item_id"),
         "quantity": entity.get("quantity"),
     }
+    if HOMEBOX_ALIAS_FIELD:
+        out[HOMEBOX_ALIAS_FIELD] = _field(entity, HOMEBOX_ALIAS_FIELD)
     parent = entity.get("parent") or {}
     out["location"] = parent.get("name")
     if with_path and entity.get("id"):
@@ -216,15 +298,35 @@ def _summarize(entity: dict, with_path: bool = False) -> dict:
     return out
 
 
-def _search_entities(q: Optional[str] = None, page_size: int = 200) -> list[dict]:
-    data = _get("/entities", q=q, pageSize=page_size)
-    if isinstance(data, dict):
-        return data.get("items") or data.get("entities") or []
-    return data or []
+def _search_all(
+    q: Optional[str] = None,
+    parent_ids: Optional[str] = None,
+    page_size: int = 200,
+) -> list[dict]:
+    """Every matching entity, following pagination until the reported `total`
+    is reached (a single page silently truncates inventories larger than the
+    page size). Results are lightweight summaries — no `fields`, empty
+    `assetId`; fetch GET /entities/{id} for full detail."""
+    out: list[dict] = []
+    page = 1
+    while True:
+        data = _get("/entities", q=q, parentIds=parent_ids,
+                    page=page, pageSize=page_size)
+        if isinstance(data, dict):
+            batch = data.get("items") or data.get("entities") or []
+            total = data.get("total")
+        else:
+            batch, total = (data or []), None
+        out.extend(batch)
+        if not batch or total is None or len(out) >= int(total):
+            break
+        page += 1
+    return out
 
 
 def _resolve(identifier: str) -> Optional[dict]:
-    """Find one entity by assetId, item_id custom field, exact name, or substring.
+    """Find one entity by assetId, alias custom field (HOMEBOX_ALIAS_FIELD),
+    exact name, or substring.
 
     Note: list/search responses are lightweight summaries (no `fields`, empty
     `assetId`), so we fetch full detail before matching on those.
@@ -239,20 +341,22 @@ def _resolve(identifier: str) -> Optional[dict]:
     except Exception:
         pass
     # 2) keyword search (matches name/description), then match on full detail
-    candidates = [_get(f"/entities/{e['id']}") for e in _search_entities(q=ident)]
+    candidates = [_get(f"/entities/{e['id']}") for e in _search_all(q=ident)]
     for full in candidates:
-        if (_field(full, "item_id") or "").lower() == ident.lower():
+        if HOMEBOX_ALIAS_FIELD and (
+                _field(full, HOMEBOX_ALIAS_FIELD) or "").lower() == ident.lower():
             return full
         if (full.get("name") or "").lower() == ident.lower():
             return full
     # 3) fallback: q does NOT index custom fields, so scan all items for an
-    #    exact item_id match (covers lookups by the join slug)
-    for e in _search_entities():
-        if _is_location(e):
-            continue
-        full = _get(f"/entities/{e['id']}")
-        if (_field(full, "item_id") or "").lower() == ident.lower():
-            return full
+    #    exact alias-field match (covers lookups by the stable slug)
+    if HOMEBOX_ALIAS_FIELD:
+        for e in _search_all():
+            if _is_location(e):
+                continue
+            full = _get(f"/entities/{e['id']}")
+            if (_field(full, HOMEBOX_ALIAS_FIELD) or "").lower() == ident.lower():
+                return full
     # 4) last resort: first keyword candidate that is an item
     for full in candidates:
         if not _is_location(full):
@@ -264,18 +368,20 @@ def _resolve(identifier: str) -> Optional[dict]:
 # Tools — read
 # ---------------------------------------------------------------------------
 @mcp.tool()
+@_tool_errors
 def search_items(query: str, limit: int = 20) -> list[dict]:
     """Search inventory items by name/keyword.
 
     Returns items (not locations) with their immediate location, assetId, and
     item_id. Use get_item for full detail on one result.
     """
-    results = [e for e in _search_entities(q=query) if not _is_location(e)]
+    results = [e for e in _search_all(q=query) if not _is_location(e)]
     # list responses omit assetId/fields, so fetch full detail for the page
     return [_summarize(_get(f"/entities/{e['id']}")) for e in results[:limit]]
 
 
 @mcp.tool()
+@_tool_errors
 def get_item(identifier: str) -> dict:
     """Get full detail for one item by assetId (e.g. 000-028), item_id slug,
     or name. Includes location path, serial, model, purchase, warranty, custom
@@ -309,6 +415,7 @@ def get_item(identifier: str) -> dict:
 
 
 @mcp.tool()
+@_tool_errors
 def list_locations() -> str:
     """Return the full location tree as an indented outline."""
     tree = _get("/entities/tree") or []
@@ -326,6 +433,7 @@ def list_locations() -> str:
 
 
 @mcp.tool()
+@_tool_errors
 def location_contents(location: str, recursive: bool = False) -> dict:
     """List what is in a location (e.g. a tote or shelf), by location name.
 
@@ -334,40 +442,26 @@ def location_contents(location: str, recursive: bool = False) -> dict:
     whole subtree and return every item nested under it, each tagged with its
     full location path; use this when a location (e.g. Garage, Basement) has
     sub-locations you also want the contents of, to avoid querying each one by
-    hand.
+    hand. `location` is a name or /-separated path (for duplicate names).
     """
-    # find the location entity id from the tree
-    tree = _get("/entities/tree") or []
-    target: dict = {"id": None, "node": None}
-
-    def find(nodes: list[dict]) -> None:
-        for n in nodes:
-            if n.get("name", "").lower() == location.lower() and target["id"] is None:
-                target["id"] = n.get("id")
-                target["node"] = n
-            find(n.get("children") or [])
-
-    find(tree)
-    if not target["id"]:
-        return {"error": f"no location named '{location}'"}
+    target, err = _find_location(location)
+    if err:
+        return {"error": err}
 
     if not recursive:
-        children = _get("/entities", parentIds=target["id"], pageSize=500)
-        items = children.get("items") if isinstance(children, dict) else children
-        sublocs = [e.get("name") for e in (items or []) if _is_location(e)]
+        children = _search_all(parent_ids=target["id"])
+        sublocs = [e.get("name") for e in children if _is_location(e)]
         return {
             "location": location,
             "items": [_summarize(_get(f"/entities/{e['id']}"))
-                      for e in (items or []) if not _is_location(e)],
+                      for e in children if not _is_location(e)],
             "sub_locations": sublocs,
         }
 
     results: list[dict] = []
 
     def walk(node: dict, path: list[str]) -> None:
-        children = _get("/entities", parentIds=node["id"], pageSize=500)
-        items = children.get("items") if isinstance(children, dict) else children
-        for e in (items or []):
+        for e in _search_all(parent_ids=node["id"]):
             if _is_location(e):
                 walk(e, path + [e.get("name")])
             else:
@@ -381,6 +475,7 @@ def location_contents(location: str, recursive: bool = False) -> dict:
 
 
 @mcp.tool()
+@_tool_errors
 def list_tags(detail: bool = False) -> Any:
     """List all tag (label) names. Set `detail=True` to instead return full
     tag objects (name, description, color, icon, parent tag name) for
@@ -408,40 +503,86 @@ def list_tags(detail: bool = False) -> Any:
 
 
 @mcp.tool()
-def warranties_expiring(before: str) -> list[dict]:
-    """List items whose warranty expires on/before an ISO date (YYYY-MM-DD).
+@_tool_errors
+def warranties_expiring(
+    before: Optional[str] = None,
+    after: Optional[str] = None,
+    lifetime: bool = False,
+) -> list[dict]:
+    """List items whose warranty expires in a date window, or items with a
+    lifetime warranty.
 
-    Useful for "which warranties expire this year".
+    `before`/`after` are ISO dates (YYYY-MM-DD): returns items with
+    after <= warrantyExpires <= before. `after` defaults to TODAY, so
+    already-expired warranties are excluded unless you pass an earlier
+    `after`. Set `lifetime=True` to instead list items flagged as lifetime
+    warranty (`before`/`after` ignored). Useful for "which warranties expire
+    this year".
     """
+    if not lifetime and not before:
+        raise ToolError("pass `before` (YYYY-MM-DD), or lifetime=True")
+    lo = (after or datetime.date.today().isoformat())[:10]
     out = []
-    for e in _search_entities():
+    for e in _search_all():
         if _is_location(e):
             continue
         full = _get(f"/entities/{e['id']}")
+        if lifetime:
+            if full.get("lifetimeWarranty"):
+                out.append({**_summarize(full), "lifetimeWarranty": True})
+            continue
         w = (full.get("warrantyExpires") or "")[:10]
-        if w and w <= before:
+        if w and lo <= w <= before:
             out.append({**_summarize(full), "warrantyExpires": w})
-    return sorted(out, key=lambda x: x["warrantyExpires"])
+    return sorted(out, key=lambda x: x.get("warrantyExpires") or x.get("name") or "")
 
 
 # ---------------------------------------------------------------------------
 # Tools — write (intake)
 # ---------------------------------------------------------------------------
-def _location_id(name: str) -> Optional[str]:
+def _walk_tree() -> list[tuple[dict, list[str]]]:
+    """Flatten /entities/tree (locations only) into (node, path-segments) pairs."""
     tree = _get("/entities/tree") or []
-    found = {"id": None}
+    out: list[tuple[dict, list[str]]] = []
 
-    def find(nodes):
-        for n in nodes:
-            if n.get("name", "").lower() == name.lower() and found["id"] is None:
-                found["id"] = n.get("id")
-            find(n.get("children") or [])
+    def walk(nodes, path):
+        for n in nodes or []:
+            p = path + [n.get("name", "")]
+            out.append((n, p))
+            walk(n.get("children"), p)
 
-    find(tree)
-    return found["id"]
+    walk(tree, [])
+    return out
+
+
+def _find_location(ref: str) -> tuple[Optional[dict], Optional[str]]:
+    """Resolve a location by name or /-separated path (e.g. 'Garage/Shelf 1').
+
+    Returns (match, error) — match is {"id", "node", "path"}. Matching is
+    case-insensitive; a path matches on its trailing segments, so
+    'Garage/Shelf 1' finds 'House/Garage/Shelf 1'. A bare name that matches
+    multiple locations is an error listing each full path (instead of silently
+    picking the first) — disambiguate by passing a path.
+    """
+    want = [s.strip().lower() for s in ref.split("/") if s.strip()]
+    if not want:
+        return None, "empty location name"
+    hits = []
+    for node, path in _walk_tree():
+        if [s.lower() for s in path[-len(want):]] == want:
+            hits.append((node, path))
+    if not hits:
+        return None, f"no location named '{ref}' (see list_locations)"
+    if len(hits) > 1:
+        paths = "; ".join("/".join(p) for _, p in hits)
+        return None, (f"'{ref}' is ambiguous — {len(hits)} locations match: "
+                      f"{paths}. Pass a path (e.g. 'Parent/{ref}').")
+    node, path = hits[0]
+    return {"id": node.get("id"), "node": node, "path": "/".join(path)}, None
 
 
 @mcp.tool()
+@_tool_errors
 def create_item(
     name: str,
     location: Optional[str] = None,
@@ -471,9 +612,12 @@ def create_item(
     NOT general inventory, where purchase_price is the insurance anchor; see
     set_value. Returns the new assetId and id.
     """
-    parent_id = _location_id(location) if location else None
-    if location and not parent_id:
-        return {"error": f"no location named '{location}' (see list_locations)"}
+    parent_id = None
+    if location:
+        m, err = _find_location(location)
+        if err:
+            return {"error": err}
+        parent_id = m["id"]
 
     created = _post("/entities", {"name": name, **({"parentId": parent_id} if parent_id else {})})
     iid = created["id"]
@@ -499,8 +643,10 @@ def create_item(
         body["parentId"] = parent_id
     for k, v in (
         ("manufacturer", manufacturer), ("modelNumber", model),
-        ("serialNumber", serial), ("purchaseDate", purchase_date),
-        ("purchaseFrom", purchase_from), ("warrantyExpires", warranty_expires),
+        ("serialNumber", serial),
+        ("purchaseDate", _rfc3339(purchase_date) if purchase_date else None),
+        ("purchaseFrom", purchase_from),
+        ("warrantyExpires", _rfc3339(warranty_expires) if warranty_expires else None),
         ("notes", notes),
     ):
         if v is not None:
@@ -524,6 +670,7 @@ def create_item(
 
 
 @mcp.tool()
+@_tool_errors
 def attach_document(
     identifier: str,
     source: str,
@@ -540,7 +687,7 @@ def attach_document(
     the entity's primary image."""
     e = _resolve(identifier)
     name = e.get("name") if e else None
-    iid = e["id"] if e else _location_id(identifier)
+    iid = e["id"] if e else (_find_location(identifier)[0] or {}).get("id")
     if not iid:
         return {"error": f"no item or location found matching '{identifier}'"}
     if name is None:
@@ -562,6 +709,7 @@ def attach_document(
 
 
 @mcp.tool()
+@_tool_errors
 def attach_location_photo(
     location: str,
     source: str,
@@ -572,9 +720,10 @@ def attach_location_photo(
     primary image. Use this to give a shelf/tote a "this is the spot" photo for
     family wayfinding. `location` is a location name (see list_locations);
     `source` is a local file path or an http(s) URL."""
-    loc_id = _location_id(location)
-    if not loc_id:
-        return {"error": f"no location named '{location}' (see list_locations)"}
+    m, err = _find_location(location)
+    if err:
+        return {"error": err}
+    loc_id = m["id"]
 
     try:
         filename, content, ctype = _load_source(source)
@@ -613,6 +762,7 @@ def _location_type_id() -> Optional[str]:
 
 
 @mcp.tool()
+@_tool_errors
 def import_csv(csv_text: str) -> dict:
     """Bulk-create items and locations from a Homebox CSV (multipart import).
 
@@ -634,6 +784,7 @@ def import_csv(csv_text: str) -> dict:
 
 
 @mcp.tool()
+@_tool_errors
 def create_location(
     name: str,
     parent: Optional[str] = None,
@@ -643,11 +794,18 @@ def create_location(
     QR-first capture group. `parent` is an existing location *name* (optional);
     `description` is the optional contents manifest (≤1000 chars). Returns the
     new location id. For deep paths, prefer import_csv's HB.location auto-create."""
-    if _location_id(name):
-        return {"error": f"a location named '{name}' already exists"}
-    parent_id = _location_id(parent) if parent else None
-    if parent and not parent_id:
-        return {"error": f"no parent location named '{parent}' (see list_locations)"}
+    parent_match = None
+    if parent:
+        parent_match, err = _find_location(parent)
+        if err:
+            return {"error": err}
+    # duplicate check is per-parent: the same name may exist elsewhere
+    siblings = (parent_match["node"].get("children") if parent_match
+                else _get("/entities/tree")) or []
+    if any((s.get("name") or "").lower() == name.lower() for s in siblings):
+        return {"error": f"a location named '{name}' already exists under "
+                         f"'{parent_match['path'] if parent_match else '(root)'}'"}
+    parent_id = parent_match["id"] if parent_match else None
     type_id = _location_type_id()
     body: dict = {"name": name}
     if type_id:
@@ -667,13 +825,15 @@ def create_location(
 
 
 @mcp.tool()
+@_tool_errors
 def set_location_manifest(location: str, description: str) -> dict:
     """Set a location's `description` to a contents manifest (the AI-written
     "what lives in this bin" text). `location` is a location name. Echoes back
     name/parent/assetId so the PUT does not wipe them (0.26 PUT-clears gotcha)."""
-    lid = _location_id(location)
-    if not lid:
-        return {"error": f"no location named '{location}' (see list_locations)"}
+    m, err = _find_location(location)
+    if err:
+        return {"error": err}
+    lid = m["id"]
     full = _get(f"/entities/{lid}")
     body: dict = {"id": lid, "name": full.get("name"), "description": description}
     if full.get("assetId"):
@@ -695,6 +855,7 @@ def _entity_type_id(name: str) -> Optional[str]:
 
 
 @mcp.tool()
+@_tool_errors
 def set_location(
     location: str,
     new_name: Optional[str] = None,
@@ -722,9 +883,10 @@ def set_location(
     fixing a mis-created entity. `asset_id` force-overrides the normally
     auto-assigned assetId. `fields` is a dict of custom-field name -> text
     value to upsert (create or overwrite each named field)."""
-    loc_id = _location_id(location)
-    if not loc_id:
-        return {"error": f"no location named '{location}' (see list_locations)"}
+    m, err = _find_location(location)
+    if err:
+        return {"error": err}
+    loc_id = m["id"]
     full = _get(f"/entities/{loc_id}")
     body = _preserve_item_body(full)
 
@@ -745,9 +907,10 @@ def set_location(
     if clear_parent:
         body.pop("parentId", None)
     elif parent is not None:
-        parent_id = _location_id(parent)
-        if not parent_id:
-            return {"error": f"no location named '{parent}' (see list_locations)"}
+        pm, err = _find_location(parent)
+        if err:
+            return {"error": err}
+        parent_id = pm["id"]
         if parent_id == loc_id:
             return {"error": "a location cannot be its own parent"}
         body["parentId"] = parent_id
@@ -788,14 +951,6 @@ def set_location(
     }
 
 
-def _rfc3339(d: str) -> str:
-    """Normalize a YYYY-MM-DD date (or full timestamp) to an RFC3339 string."""
-    d = d.strip()
-    if "T" in d:
-        return d
-    return f"{d}T00:00:00Z"
-
-
 def _preserve_item_body(full: dict) -> dict:
     """Rebuild a full item PUT body from a GET so a partial update does not wipe
     other fields (the 0.26 PUT-clears gotcha). Override the keys you want, then
@@ -833,6 +988,7 @@ def _preserve_item_body(full: dict) -> dict:
 
 
 @mcp.tool()
+@_tool_errors
 def set_warranty(
     identifier: str,
     expires: Optional[str] = None,
@@ -870,6 +1026,7 @@ def set_warranty(
 
 
 @mcp.tool()
+@_tool_errors
 def set_value(
     identifier: str,
     resale_value: Optional[float] = None,
@@ -906,6 +1063,7 @@ def set_value(
 
 
 @mcp.tool()
+@_tool_errors
 def set_identity(
     identifier: str,
     manufacturer: Optional[str] = None,
@@ -956,6 +1114,7 @@ def _ensure_tag_ids(names: list[str]) -> list[str]:
 
 
 @mcp.tool()
+@_tool_errors
 def set_tags(identifier: str, tags: list[str], mode: str = "add") -> dict:
     """Add, remove, or replace tags on an existing item (assetId / item_id / name).
 
@@ -1001,6 +1160,7 @@ def _tag_by_name(name: str) -> Optional[dict]:
 
 
 @mcp.tool()
+@_tool_errors
 def set_tag(
     name: str,
     new_name: Optional[str] = None,
@@ -1056,30 +1216,33 @@ def set_tag(
 
 def _label_dir(out_dir: Optional[str]) -> Path:
     d = Path(out_dir).expanduser() if out_dir else (
-        Path(__file__).resolve().parent.parent / "intake" / "labels"
+        Path(HOMEBOX_LABEL_DIR).expanduser() if HOMEBOX_LABEL_DIR else Path.cwd()
     )
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 @mcp.tool()
+@_tool_errors
 def generate_label(
     identifier: str,
     kind: str = "location",
     out_dir: Optional[str] = None,
 ) -> dict:
-    """Save a printable Homebox label PNG (QR + readable name) for a location or
-    item, to stick on a tote so the QR-first capture loop can read it. `kind` is
-    "location", "item", or "asset". For location/item, `identifier` is a name or
-    slug (resolved to an id); for asset it's the assetId (e.g. 000-028). Saves to
-    `out_dir` (default: intake/labels/). Returns the saved file path."""
+    """Save a printable Homebox label PNG (QR + readable name) for a location
+    or item, e.g. to stick on a tote/bin. `kind` is "location", "item", or
+    "asset". For location/item, `identifier` is a name or slug (resolved to an
+    id); for asset it's the assetId (e.g. 000-028). Saves to `out_dir`
+    (default: $HOMEBOX_LABEL_DIR, else the current directory). Returns the
+    saved file path."""
     kind = kind.lower()
     if kind == "asset":
         ref = identifier
     elif kind == "location":
-        ref = _location_id(identifier)
-        if not ref:
-            return {"error": f"no location named '{identifier}'"}
+        m, err = _find_location(identifier)
+        if err:
+            return {"error": err}
+        ref = m["id"]
     else:
         e = _resolve(identifier)
         if not e:
@@ -1094,10 +1257,12 @@ def generate_label(
 
 
 @mcp.tool()
+@_tool_errors
 def qrcode(data: str, out_dir: Optional[str] = None) -> dict:
     """Save a raw QR-code JPEG encoding arbitrary `data` (e.g. a deep link).
     For tote labels prefer generate_label (adds the readable name). Saves to
-    `out_dir` (default: intake/labels/). Returns the saved file path."""
+    `out_dir` (default: $HOMEBOX_LABEL_DIR, else the current directory).
+    Returns the saved file path."""
     r = _client.get("/qrcode", params={"data": data})
     r.raise_for_status()
     safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in data)[:48] or "qr"
@@ -1107,12 +1272,13 @@ def qrcode(data: str, out_dir: Optional[str] = None) -> dict:
 
 
 @mcp.tool()
+@_tool_errors
 def existing_item_ids() -> dict:
     """Return {item_id: assetId} for every entity that has an item_id custom
     field — a one-pass index for DEDUPE before a bulk import (q does not index
     custom fields, so this scans). assetId may be empty for un-asset'd rows."""
     out: dict[str, str] = {}
-    for e in _search_entities():
+    for e in _search_all():
         full = _get(f"/entities/{e['id']}")
         iid = _field(full, "item_id")
         if iid:
@@ -1121,6 +1287,7 @@ def existing_item_ids() -> dict:
 
 
 @mcp.tool()
+@_tool_errors
 def set_primary_photos() -> dict:
     """Ensure every entity with photos has a primary image set (finalize step
     after a bulk photo attach). Thin wrapper over POST /actions/set-primary-photos."""
@@ -1128,6 +1295,7 @@ def set_primary_photos() -> dict:
 
 
 @mcp.tool()
+@_tool_errors
 def create_thumbnails() -> dict:
     """Generate any missing photo thumbnails (finalize step after a bulk photo
     attach). Thin wrapper over POST /actions/create-missing-thumbnails."""
@@ -1135,6 +1303,7 @@ def create_thumbnails() -> dict:
 
 
 @mcp.tool()
+@_tool_errors
 def barcode_lookup(code: str) -> dict:
     """Look up a UPC/EAN barcode → name/manufacturer/model (optional path for
     boxed goods). Thin wrapper over GET /products/search-from-barcode."""

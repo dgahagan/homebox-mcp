@@ -16,12 +16,12 @@ Sizes: **S** = under an hour, **M** = a session, **L** = multiple sessions.
 
 The order below matters: config first (1.1), then the helpers everything else uses (1.2–1.4), then the API-surface changes (1.5–1.8), then the behavior fixes (1.9–1.11).
 
-- [ ] 1.1 **Config generalization (S)** — new env vars, resolved like the existing ones:
+- [x] 1.1 **Config generalization (S)** — new env vars, resolved like the existing ones: *(done 2026-07-03; both values also added to the personal gitignored `.env` so behavior is unchanged locally — Phase 4.1 partially pre-done)*
   - `HOMEBOX_ALIAS_FIELD` — names one custom field used for identifier resolution and the dedupe index. Unset = resolution by assetId/name only. (Personal value: `item_id`.)
   - `HOMEBOX_LABEL_DIR` — output dir for `generate_label`/`qrcode`. Default: current working directory. (Kills the `../intake/labels` escape.)
-- [ ] 1.2 **Pagination (M)** — `_search_all(q=None, tags=None, parent_ids=None)` helper that loops `page`/`pageSize` until the reported `total` is reached. Replace every `_search_entities()` call site: `search_items`, `warranties_expiring`, `existing_item_ids`' successor (1.7), `_resolve`'s scan fallback. Add a regression test with a mocked 450-entity instance.
-- [ ] 1.3 **Error surfacing (M)** — one `_api_call` wrapper so every tool failure returns `{"error": "<status> <reason>", "detail": <Homebox response body>}` instead of a raw httpx traceback. Sweep all tools to use it; kill the current inconsistency (some return `{"error": ...}`, some raise).
-- [ ] 1.4 **Version guard (S)** — lazy check on first tool call (not at startup, so the MCP handshake can't fail): `GET /status`, cache result; if the entities API is absent or version < 0.26, every tool returns a clear *"this server requires Homebox ≥ 0.26 (sysadminsmedia); your instance reports vX.Y"* error.
+- [x] 1.2 **Pagination (M)** — `_search_all(q=None, parent_ids=None)` helper that loops `page`/`pageSize` until the reported `total` is reached. Replaced every call site incl. `location_contents`' child listing (was its own 500-cap truncation). Live-verified page_size=10 returns the full set. `tags` param arrives with 2.6; mocked 450-entity unit test lands with 3.2. *(done 2026-07-03)*
+- [x] 1.3 **Error surfacing (M)** — implemented as a `@_tool_errors` decorator on all 24 tools. **Deviation from plan:** transport/API failures raise MCP `ToolError` (status + method + path + Homebox's response body) instead of returning `{"error": ..., "detail": ...}` dicts — return-shape dicts would collide with FastMCP's structured-output schemas on non-dict-returning tools; ToolError is the MCP-native mechanism and reads the same to the model. Domain errors (not found, ambiguous, bad args) remain `{"error": ...}` returns. *(done 2026-07-03)*
+- [x] 1.4 **Version guard (S)** — lazy, cached check on first tool call via the same decorator; fails open if `/status` is unreachable. Live-verified: 0.26.2 passes, simulated v0.21.3 yields the clear error. *(done 2026-07-03)*
 - [ ] 1.5 **`fields: dict` generalization (M)** — the breaking change:
   - `create_item`: drop `item_id`, `category`, `dossier`, `resale_value`, `value_asof`, `value_source` named params; add `fields: dict`. Value → type mapping: `str`→text, `int`/`float`→number (int-coerced, keeping the 500-bug guard), `bool`→boolean.
   - Replace `set_value` with generic `set_fields(identifier, fields)` (same typed mapping, upsert semantics via `_upsert_field`).
@@ -31,9 +31,9 @@ The order below matters: config first (1.1), then the helpers everything else us
   - `_resolve_fuzzy(ident)` — current behavior incl. keyword last-resort. Used by `get_item` only.
 - [ ] 1.7 **`existing_item_ids` → `field_index(field_name?)` (S)** — generic `{field_value: assetId}` index over any custom field; `field_name` defaults to `HOMEBOX_ALIAS_FIELD`. Uses `_search_all`.
 - [ ] 1.8 **Strip personal references (S)** — remove `inventory/ENRICHMENT.md`, `/enrich-inventory`, "QR-first capture loop", `warranty-active` pairing advice, and the item_id slug examples from all docstrings. Docstrings describe the API contract only; workflow guidance lives in the caller's skills.
-- [ ] 1.9 **Date normalization (S)** — route `create_item`'s `purchase_date`/`warranty_expires` through `_rfc3339` (same as `set_warranty`).
-- [ ] 1.10 **`warranties_expiring` bounds (S)** — add `after: str = today` (excludes long-expired by default; pass explicit earlier date to include them) and `lifetime: bool = False` to list lifetime-warranty items instead.
-- [ ] 1.11 **Location path resolution (M)** — everywhere a location name is accepted, also accept a `/`-separated path (`Garage/Shelf 1`). Bare-name lookup that matches multiple locations errors with the full paths listed instead of silently taking the first. `create_location` duplicate check becomes per-parent, not global.
+- [x] 1.9 **Date normalization (S)** — `create_item` routes `purchase_date`/`warranty_expires` through `_rfc3339`. Live-verified round-trip (Homebox echoes dates back date-only; both forms accepted). *(done 2026-07-03)*
+- [x] 1.10 **`warranties_expiring` bounds (S)** — `after` defaults to today (excludes long-expired), `lifetime=True` lists lifetime-warranty items; missing `before` raises a usage error. *(done 2026-07-03)*
+- [x] 1.11 **Location path resolution (M)** — `_find_location` resolves names or `/`-paths (suffix match, case-insensitive) everywhere a location is accepted; ambiguous bare names error with all full paths listed; `create_location` duplicate check is per-parent. Live-verified with same-named ZZ shelves under two parents. *(done 2026-07-03)*
 
 ## Phase 2 — Feature-complete core (P1 new tools)
 
