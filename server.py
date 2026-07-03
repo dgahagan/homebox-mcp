@@ -28,6 +28,8 @@ from typing import Any, Optional
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+__version__ = "0.9.0"
+
 
 # ---------------------------------------------------------------------------
 # Config
