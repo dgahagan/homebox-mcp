@@ -14,14 +14,14 @@ do intake without hand-rolling `curl`.
 | Tool | Purpose |
 |------|---------|
 | `search_items(query, limit)` | Keyword search → items with assetId, item_id, location |
-| `get_item(identifier)` | Full detail by **assetId** (`000-028`), **item_id** slug, or name |
+| `get_item(identifier)` | Full detail by **assetId** (`000-028`), the **alias custom field** (`$HOMEBOX_ALIAS_FIELD`), or name |
 | `list_locations()` | The full location tree as an indented outline |
 | `location_contents(location, recursive=False)` | What's in a location/tote (items + sub-locations); `recursive=True` walks the whole subtree and returns every nested item with its full location path — use for locations like Garage/Basement that have sub-locations |
 | `list_tags(detail=False)` | All tag (label) names; `detail=True` returns full objects (description, color, icon, parent tag) |
 | `warranties_expiring(before)` | Items whose warranty expires on/before an ISO date |
-| `create_item(...)` | Create + enrich an item in one call (intake) |
-| `set_warranty(identifier, expires, lifetime, details)` | Set warranty fields on an existing item (full-body PUT, no wipe) — used by enrichment + `/enrich-inventory` |
-| `set_value(identifier, resale_value, value_asof, value_source)` | Set current market/resale value (custom fields) — **big depreciating assets only** (vehicles, watercraft); general inventory uses `purchase_price` (full-body PUT, no wipe) |
+| `create_item(...)` | Create + enrich an item in one call (intake); `fields` dict sets custom fields, typed by JSON value type |
+| `set_warranty(identifier, expires, lifetime, details)` | Set warranty fields on an existing item (full-body PUT, no wipe) |
+| `set_fields(identifier, fields)` | Create/update custom fields on an existing item — values typed by JSON type: text / number (int-coerced) / boolean (full-body PUT, no wipe) |
 | `set_identity(identifier, manufacturer, model_number, serial_number)` | Set manufacturer/model/serial on an existing item (full-body PUT, no wipe) |
 | `set_tags(identifier, tags, mode="add")` | Add/remove/replace tags **on an item**; auto-creates unknown tag names (full-body PUT, no wipe) |
 | `set_tag(name, new_name, description, color, icon, parent, clear_parent)` | Create/edit **a tag's own** metadata (rename, description, color, icon, parent tag for grouping) — not what's tagged on an item, see `set_tags` |
@@ -38,7 +38,7 @@ do intake without hand-rolling `curl`.
 | `set_location(location, new_name, parent, clear_parent, description, notes, tags, tags_mode, entity_type, asset_id, fields)` | General-purpose location editor — name, parent (or move to root), tags, entity type, assetId, notes, custom fields (full-body PUT, no wipe) |
 | `generate_label(identifier, kind, out_dir)` | Save a printable label **PNG** (QR + name) for a location/item/asset → `intake/labels/` |
 | `qrcode(data, out_dir)` | Save a raw QR **JPEG** for arbitrary data |
-| `existing_item_ids()` | `{item_id: assetId}` index for **dedupe** before import (q doesn't index custom fields) |
+| `field_index(field_name?)` | `{field_value: assetId}` index over any custom field (default: `$HOMEBOX_ALIAS_FIELD`) for **dedupe** before import (q doesn't index custom fields) |
 | `set_primary_photos()` / `create_thumbnails()` | Finalize after a bulk photo attach |
 | `barcode_lookup(code)` | UPC/EAN → name/manufacturer/model (optional, for boxed goods) |
 

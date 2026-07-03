@@ -10,7 +10,8 @@ inventory questions ("where is my X", "what's in Tote B-3", "which warranties
 expire this year") and perform intake (create item + attach manual).
 
 Config (resolved in order):
-  1. environment variables HOMEBOX_URL / HOMEBOX_TOKEN
+  1. environment variables (HOMEBOX_URL / HOMEBOX_TOKEN, plus optional
+     HOMEBOX_ALIAS_FIELD / HOMEBOX_LABEL_DIR — see .env.example)
   2. a sibling `.env` file (KEY=VALUE lines) next to this script  [gitignored]
 
 In Homebox >=0.26 items and locations are unified as "entities"; an entity is a
@@ -243,6 +244,17 @@ def _field_value(f: dict) -> Any:
     return f.get("textValue")
 
 
+def _field_type(value: Any) -> str:
+    """Pick a Homebox custom-field type from a value's JSON type: bool →
+    boolean, int/float → number, everything else → text. (bool first — it's an
+    int subclass.)"""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    return "text"
+
+
 def _make_field(name: str, value: Any, type: str = "text") -> dict:
     """Build a custom-field entry with the correct value key for its type."""
     entry: dict = {"name": name, "type": type}
@@ -324,15 +336,8 @@ def _search_all(
     return out
 
 
-def _resolve(identifier: str) -> Optional[dict]:
-    """Find one entity by assetId, alias custom field (HOMEBOX_ALIAS_FIELD),
-    exact name, or substring.
-
-    Note: list/search responses are lightweight summaries (no `fields`, empty
-    `assetId`), so we fetch full detail before matching on those.
-    """
-    ident = identifier.strip()
-    # 1) assetId via the dedicated assets endpoint (e.g. "000-028")
+def _asset_lookup(ident: str) -> Optional[dict]:
+    """Full entity detail by assetId (e.g. '000-028'), or None."""
     try:
         ares = _get(f"/assets/{ident}")
         items = ares.get("items") if isinstance(ares, dict) else None
@@ -340,27 +345,73 @@ def _resolve(identifier: str) -> Optional[dict]:
             return _get(f"/entities/{items[0]['id']}")
     except Exception:
         pass
-    # 2) keyword search (matches name/description), then match on full detail
-    candidates = [_get(f"/entities/{e['id']}") for e in _search_all(q=ident)]
-    for full in candidates:
+    return None
+
+
+def _exact_matches(ident: str) -> list[dict]:
+    """All entities whose alias field or name equals `ident` (case-insensitive).
+
+    Keyword search first (cheap; matches name/description), then — only if
+    nothing matched and an alias field is configured — a full scan, since `q`
+    does not index custom fields. List responses are lightweight summaries, so
+    full detail is fetched before matching.
+    """
+    def hit(full: dict) -> bool:
         if HOMEBOX_ALIAS_FIELD and (
                 _field(full, HOMEBOX_ALIAS_FIELD) or "").lower() == ident.lower():
-            return full
-        if (full.get("name") or "").lower() == ident.lower():
-            return full
-    # 3) fallback: q does NOT index custom fields, so scan all items for an
-    #    exact alias-field match (covers lookups by the stable slug)
-    if HOMEBOX_ALIAS_FIELD:
+            return True
+        return (full.get("name") or "").lower() == ident.lower()
+
+    candidates = [_get(f"/entities/{e['id']}") for e in _search_all(q=ident)]
+    matches = {full["id"]: full for full in candidates if hit(full)}
+    if not matches and HOMEBOX_ALIAS_FIELD:
         for e in _search_all():
             if _is_location(e):
                 continue
             full = _get(f"/entities/{e['id']}")
-            if (_field(full, HOMEBOX_ALIAS_FIELD) or "").lower() == ident.lower():
-                return full
-    # 4) last resort: first keyword candidate that is an item
-    for full in candidates:
-        if not _is_location(full):
-            return full
+            if hit(full):
+                matches[full["id"]] = full
+    return list(matches.values())
+
+
+def _resolve_exact(identifier: str) -> tuple[Optional[dict], Optional[str]]:
+    """Resolve an item for a WRITE: assetId, alias field, or exact name only —
+    never a fuzzy keyword fallback (a typo must not mutate the wrong item).
+
+    Returns (entity, error). Multiple exact matches are an error listing each
+    candidate's assetId.
+    """
+    ident = identifier.strip()
+    full = _asset_lookup(ident)
+    if full:
+        return full, None
+    matches = _exact_matches(ident)
+    if not matches:
+        alias = f"{HOMEBOX_ALIAS_FIELD}, " if HOMEBOX_ALIAS_FIELD else ""
+        return None, (f"no item exactly matched '{identifier}' by assetId, "
+                      f"{alias}or name — writes require an exact identifier "
+                      f"(use search_items/get_item to find it first)")
+    if len(matches) > 1:
+        cands = "; ".join(f"{m.get('name')} (assetId {m.get('assetId') or '?'})"
+                          for m in matches)
+        return None, (f"'{identifier}' is ambiguous — {len(matches)} items "
+                      f"match: {cands}. Use the assetId.")
+    return matches[0], None
+
+
+def _resolve_fuzzy(identifier: str) -> Optional[dict]:
+    """Find one entity for a READ: assetId, alias field, exact name — falling
+    back to the first keyword-search hit that is an item."""
+    ident = identifier.strip()
+    full = _asset_lookup(ident)
+    if full:
+        return full
+    matches = _exact_matches(ident)
+    if matches:
+        return matches[0]
+    for e in _search_all(q=ident):
+        if not _is_location(e):
+            return _get(f"/entities/{e['id']}")
     return None
 
 
@@ -373,7 +424,8 @@ def search_items(query: str, limit: int = 20) -> list[dict]:
     """Search inventory items by name/keyword.
 
     Returns items (not locations) with their immediate location, assetId, and
-    item_id. Use get_item for full detail on one result.
+    the alias custom field (if $HOMEBOX_ALIAS_FIELD is configured). Use
+    get_item for full detail on one result.
     """
     results = [e for e in _search_all(q=query) if not _is_location(e)]
     # list responses omit assetId/fields, so fetch full detail for the page
@@ -383,10 +435,11 @@ def search_items(query: str, limit: int = 20) -> list[dict]:
 @mcp.tool()
 @_tool_errors
 def get_item(identifier: str) -> dict:
-    """Get full detail for one item by assetId (e.g. 000-028), item_id slug,
-    or name. Includes location path, serial, model, purchase, warranty, custom
-    fields, tags, and attachments."""
-    e = _resolve(identifier)
+    """Get full detail for one item by assetId (e.g. 000-028), alias custom
+    field, or name (fuzzy fallback: first keyword match). Includes location
+    path, serial, model, purchase, warranty, custom fields, tags, and
+    attachments."""
+    e = _resolve_fuzzy(identifier)
     if not e:
         return {"error": f"no item found matching '{identifier}'"}
     return {
@@ -595,22 +648,16 @@ def create_item(
     purchase_from: Optional[str] = None,
     warranty_expires: Optional[str] = None,
     notes: Optional[str] = None,
-    item_id: Optional[str] = None,
-    category: Optional[str] = None,
-    dossier: Optional[str] = None,
-    resale_value: Optional[float] = None,
-    value_asof: Optional[str] = None,
-    value_source: Optional[str] = None,
+    fields: Optional[dict] = None,
     tags: Optional[list[str]] = None,
 ) -> dict:
     """Create an inventory item and enrich it in one call.
 
-    `location` is a location name (must exist; use list_locations). `item_id`
-    is the stable join slug (e.g. gear-dji-osmo-action6). `tags` are tag names
-    (must already exist; use list_tags). `resale_value`/`value_asof`/
-    `value_source` are for big depreciating assets only (vehicles, watercraft) —
-    NOT general inventory, where purchase_price is the insurance anchor; see
-    set_value. Returns the new assetId and id.
+    `location` is a location name or /-separated path (must exist; use
+    list_locations). `tags` are tag names (must already exist; use list_tags).
+    `fields` maps custom-field name -> value; each value's JSON type picks the
+    field type (string -> text, number -> number [integer-coerced],
+    true/false -> boolean). Returns the new assetId and id.
     """
     parent_id = None
     if location:
@@ -630,13 +677,8 @@ def create_item(
             if tid:
                 tag_ids.append(tid)
 
-    fields = []
-    for fname, fval in (("item_id", item_id), ("category", category), ("dossier", dossier),
-                        ("value_asof", value_asof), ("value_source", value_source)):
-        if fval is not None:
-            fields.append(_make_field(fname, fval, "text"))
-    if resale_value is not None:
-        fields.append(_make_field("resale_value", resale_value, "number"))
+    field_entries = [_make_field(k, v, _field_type(v))
+                     for k, v in (fields or {}).items() if v is not None]
 
     body: dict = {"id": iid, "name": name, "quantity": quantity}
     if parent_id:
@@ -655,8 +697,8 @@ def create_item(
         body["purchasePrice"] = purchase_price
     if tag_ids:
         body["tagIds"] = tag_ids
-    if fields:
-        body["fields"] = fields
+    if field_entries:
+        body["fields"] = field_entries
 
     _put(f"/entities/{iid}", body)
     # assign asset id
@@ -666,7 +708,9 @@ def create_item(
         pass
     full = _get(f"/entities/{iid}")
     return {"id": iid, "assetId": full.get("assetId"), "name": name,
-            "location": location, "item_id": item_id}
+            "location": location,
+            "fields": {f.get("name"): _field_value(f)
+                       for f in full.get("fields") or []}}
 
 
 @mcp.tool()
@@ -680,18 +724,21 @@ def attach_document(
 ) -> dict:
     """Attach a document to an item OR a location. `source` is a local file path
     or an http(s) URL (downloaded then uploaded). `doc_type` is e.g. manual,
-    attachment, warranty, receipt, photo. `identifier` is assetId/item_id/name
+    attachment, warranty, receipt, photo. `identifier` is assetId/alias/name
     for an item, or a location name (tried as a fallback if no item matches —
     for a location photo specifically, prefer attach_location_photo, which
     defaults primary=True for wayfinding shots). Set `primary` to make a photo
     the entity's primary image."""
-    e = _resolve(identifier)
-    name = e.get("name") if e else None
-    iid = e["id"] if e else (_find_location(identifier)[0] or {}).get("id")
-    if not iid:
-        return {"error": f"no item or location found matching '{identifier}'"}
-    if name is None:
-        name = identifier
+    e, item_err = _resolve_exact(identifier)
+    if e:
+        iid, name = e["id"], e.get("name")
+    else:
+        if item_err and "ambiguous" in item_err:
+            return {"error": item_err}
+        loc, _ = _find_location(identifier)
+        if not loc:
+            return {"error": f"no item or location exactly matched '{identifier}'"}
+        iid, name = loc["id"], identifier
 
     try:
         filename, content, ctype = _load_source(source)
@@ -772,7 +819,7 @@ def import_csv(csv_text: str) -> dict:
       HB.tags (must already exist; see list_tags), HB.quantity, HB.serial_number,
       HB.model_number, HB.manufacturer, HB.notes, HB.purchase_price,
       HB.purchase_from, HB.purchase_time, HB.warranty_expires,
-      HB.field.<custom> (e.g. HB.field.item_id, HB.field.category).
+      HB.field.<name> (custom fields).
     A location-only row (HB.location set, contents described elsewhere) creates
     just the location. After import, call set_primary_photos + create_thumbnails
     if you attached photos. Returns the count of data rows submitted."""
@@ -791,9 +838,10 @@ def create_location(
     description: Optional[str] = None,
 ) -> dict:
     """Create a LOCATION entity (e.g. a new tote/bin/shelf) to bootstrap a
-    QR-first capture group. `parent` is an existing location *name* (optional);
-    `description` is the optional contents manifest (≤1000 chars). Returns the
-    new location id. For deep paths, prefer import_csv's HB.location auto-create."""
+    new storage spot. `parent` is an existing location name or /-separated
+    path (optional); `description` is optional free text, e.g. a contents
+    summary (≤1000 chars). Returns the new location id. For deep paths,
+    prefer import_csv's HB.location auto-create."""
     parent_match = None
     if parent:
         parent_match, err = _find_location(parent)
@@ -827,9 +875,10 @@ def create_location(
 @mcp.tool()
 @_tool_errors
 def set_location_manifest(location: str, description: str) -> dict:
-    """Set a location's `description` to a contents manifest (the AI-written
-    "what lives in this bin" text). `location` is a location name. Echoes back
-    name/parent/assetId so the PUT does not wipe them (0.26 PUT-clears gotcha)."""
+    """Set a location's `description` to a contents manifest (a "what lives in
+    this bin" summary). `location` is a location name or /-separated path.
+    Echoes back name/parent/assetId so the PUT does not wipe them (0.26
+    PUT-clears gotcha)."""
     m, err = _find_location(location)
     if err:
         return {"error": err}
@@ -881,8 +930,9 @@ def set_location(
     same semantics as set_tags. `entity_type` is an entity-type name (e.g.
     "Item" to convert a location into a non-location entity) — rare, only for
     fixing a mis-created entity. `asset_id` force-overrides the normally
-    auto-assigned assetId. `fields` is a dict of custom-field name -> text
-    value to upsert (create or overwrite each named field)."""
+    auto-assigned assetId. `fields` is a dict of custom-field name -> value to
+    upsert (create or overwrite each named field; the value's JSON type picks
+    the field type)."""
     m, err = _find_location(location)
     if err:
         return {"error": err}
@@ -933,7 +983,7 @@ def set_location(
 
     if fields:
         for fname, fval in fields.items():
-            _upsert_field(body, fname, fval, "text")
+            _upsert_field(body, fname, fval, _field_type(fval))
 
     _put(f"/entities/{loc_id}", body)
     after = _get(f"/entities/{loc_id}")
@@ -995,17 +1045,16 @@ def set_warranty(
     lifetime: Optional[bool] = None,
     details: Optional[str] = None,
 ) -> dict:
-    """Set warranty info on an existing item (assetId / item_id slug / name).
+    """Set warranty info on an existing item (assetId / alias field / exact name).
 
     `expires` is a YYYY-MM-DD date (warranty end), `lifetime` flags a lifetime
-    warranty, `details` is a short terms summary (e.g. "Klein limited lifetime,
-    test/measurement instruments excluded"). Only the args you pass are changed;
-    everything else on the item (price, tags, custom fields, photos) is preserved
-    via a full-body PUT. Pair with the `warranty-active` tag. Used by the shared
-    enrichment flow (see inventory/ENRICHMENT.md) and the /enrich-inventory sweep."""
-    full = _resolve(identifier)
-    if not full:
-        return {"error": f"no item matched '{identifier}'"}
+    warranty, `details` is a short terms summary (e.g. "limited lifetime,
+    test/measurement instruments excluded"). Only the args you pass are
+    changed; everything else on the item (price, tags, custom fields, photos)
+    is preserved via a full-body PUT (the 0.26 PUT-clears gotcha)."""
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
     body = _preserve_item_body(full)
     if details is not None:
         body["warrantyDetails"] = details
@@ -1027,31 +1076,22 @@ def set_warranty(
 
 @mcp.tool()
 @_tool_errors
-def set_value(
-    identifier: str,
-    resale_value: Optional[float] = None,
-    value_asof: Optional[str] = None,
-    value_source: Optional[str] = None,
-) -> dict:
-    """Set current market/resale value on an existing item (assetId / item_id / name).
+def set_fields(identifier: str, fields: dict) -> dict:
+    """Create or update custom fields on an existing item (assetId / alias
+    field / exact name).
 
-    For **big depreciating assets only** (vehicles, watercraft) — NOT general
-    inventory, where `purchase_price` is the insurance/replacement-cost anchor and
-    a resale estimate is effort for little reward. `resale_value` is a number (USD),
-    `value_asof` the YYYY-MM-DD the estimate was made (so a stale figure is obvious),
-    `value_source` a short basis (e.g. "KBB private-party, high-mileage adj").
-    Stored as custom fields; everything else on the item is preserved via a
-    full-body PUT (the 0.26 PUT-clears gotcha)."""
-    full = _resolve(identifier)
-    if not full:
-        return {"error": f"no item matched '{identifier}'"}
+    `fields` maps custom-field name -> value; each value's JSON type picks the
+    field type (string -> text, number -> number [integer-coerced — the API
+    500s on float number values], true/false -> boolean). Upsert semantics:
+    named fields are created or overwritten, others untouched. Everything else
+    on the item is preserved via a full-body PUT (the 0.26 PUT-clears gotcha)."""
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
     body = _preserve_item_body(full)
-    if resale_value is not None:
-        _upsert_field(body, "resale_value", resale_value, "number")
-    if value_asof is not None:
-        _upsert_field(body, "value_asof", value_asof, "text")
-    if value_source is not None:
-        _upsert_field(body, "value_source", value_source, "text")
+    for fname, fval in (fields or {}).items():
+        if fval is not None:
+            _upsert_field(body, fname, fval, _field_type(fval))
     _put(f"/entities/{full['id']}", body)
     after = _get(f"/entities/{full['id']}")
     return {
@@ -1070,15 +1110,16 @@ def set_identity(
     model_number: Optional[str] = None,
     serial_number: Optional[str] = None,
 ) -> dict:
-    """Set manufacturer/model/serial on an existing item (assetId / item_id / name).
+    """Set manufacturer/model/serial on an existing item (assetId / alias
+    field / exact name).
 
     Only the args you pass are changed; everything else on the item (price,
     tags, custom fields, photos, warranty) is preserved via a full-body PUT
     (the 0.26 PUT-clears gotcha). Use when a nameplate/label photo reveals a
     serial number or a model-number correction after the item was created."""
-    full = _resolve(identifier)
-    if not full:
-        return {"error": f"no item matched '{identifier}'"}
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
     body = _preserve_item_body(full)
     if manufacturer is not None:
         body["manufacturer"] = manufacturer
@@ -1116,7 +1157,8 @@ def _ensure_tag_ids(names: list[str]) -> list[str]:
 @mcp.tool()
 @_tool_errors
 def set_tags(identifier: str, tags: list[str], mode: str = "add") -> dict:
-    """Add, remove, or replace tags on an existing item (assetId / item_id / name).
+    """Add, remove, or replace tags on an existing item (assetId / alias
+    field / exact name).
 
     `mode` is "add" (default — merges with the item's existing tags), "remove"
     (drops just the named tags, keeps the rest), or "replace" (item ends up
@@ -1124,9 +1166,9 @@ def set_tags(identifier: str, tags: list[str], mode: str = "add") -> dict:
     case-insensitively against list_tags and auto-created if they don't exist
     yet. Everything else on the item (price, custom fields, photos, warranty)
     is preserved via a full-body PUT (the 0.26 PUT-clears gotcha)."""
-    full = _resolve(identifier)
-    if not full:
-        return {"error": f"no item matched '{identifier}'"}
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
     if mode not in ("add", "remove", "replace"):
         return {"error": f"mode must be add/remove/replace, got '{mode}'"}
     body = _preserve_item_body(full)
@@ -1174,8 +1216,8 @@ def set_tag(
     set_tags for that). Matches `name` case-insensitively against list_tags;
     creates the tag if it doesn't exist yet. Only the args you pass are
     changed. `parent` nests this tag under another (existing) tag name, for
-    grouping related tags in the Homebox UI (e.g. tier-bifl/tier-lifetime-
-    warranty under a "tier" parent); pass `clear_parent=True` to un-nest it.
+    grouping related tags in the Homebox UI (e.g. several condition-* tags
+    under a "condition" parent); pass `clear_parent=True` to un-nest it.
     Use list_tags(detail=True) to see current tag metadata first."""
     t = _tag_by_name(name)
     if not t:
@@ -1244,7 +1286,7 @@ def generate_label(
             return {"error": err}
         ref = m["id"]
     else:
-        e = _resolve(identifier)
+        e = _resolve_fuzzy(identifier)
         if not e:
             return {"error": f"no item found matching '{identifier}'"}
         ref, kind = e["id"], "item"
@@ -1273,16 +1315,22 @@ def qrcode(data: str, out_dir: Optional[str] = None) -> dict:
 
 @mcp.tool()
 @_tool_errors
-def existing_item_ids() -> dict:
-    """Return {item_id: assetId} for every entity that has an item_id custom
-    field — a one-pass index for DEDUPE before a bulk import (q does not index
-    custom fields, so this scans). assetId may be empty for un-asset'd rows."""
+def field_index(field_name: Optional[str] = None) -> dict:
+    """Return {field_value: assetId} for every entity that has the named
+    custom field — a one-pass index for DEDUPE before a bulk import (q does
+    not index custom fields, so this scans every entity). `field_name`
+    defaults to $HOMEBOX_ALIAS_FIELD. assetId may be empty for un-asset'd
+    rows."""
+    fname = (field_name or HOMEBOX_ALIAS_FIELD or "").strip()
+    if not fname:
+        raise ToolError("pass field_name (no HOMEBOX_ALIAS_FIELD is configured)")
     out: dict[str, str] = {}
     for e in _search_all():
         full = _get(f"/entities/{e['id']}")
-        iid = _field(full, "item_id")
-        if iid:
-            out[iid] = full.get("assetId") or ""
+        val = next((_field_value(f) for f in full.get("fields") or []
+                    if f.get("name") == fname), None)
+        if val is not None and val != "":
+            out[str(val)] = full.get("assetId") or ""
     return out
 
 

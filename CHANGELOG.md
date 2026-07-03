@@ -6,6 +6,23 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- `create_item`: personal named params (`item_id`, `category`, `dossier`,
+  `resale_value`, `value_asof`, `value_source`) replaced by a generic
+  `fields: dict` — each value's JSON type picks the custom-field type
+  (string → text, number → number [integer-coerced], boolean → boolean).
+- `set_value` replaced by generic `set_fields(identifier, fields)` (same typed
+  mapping, upsert semantics).
+- `existing_item_ids()` replaced by `field_index(field_name?)` — a
+  `{field_value: assetId}` index over any custom field, defaulting to
+  `$HOMEBOX_ALIAS_FIELD`.
+- Write tools (`set_warranty`, `set_fields`, `set_identity`, `set_tags`,
+  `attach_document`) now require an exact identifier (assetId, alias field, or
+  name); fuzzy matches are refused and multiple exact matches error with the
+  candidates listed, so a typo can no longer mutate the wrong item. Read tools
+  (`get_item`, `generate_label`) keep the fuzzy fallback.
+- `set_location`'s `fields` values are typed by JSON type (was text-only).
+
 ### Added
 - `HOMEBOX_ALIAS_FIELD` env var: name one custom field as a stable item
   identifier (items resolve by it; summaries surface it). Previously the
