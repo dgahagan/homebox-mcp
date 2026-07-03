@@ -1,0 +1,28 @@
+# Secrets — never commit the live credential (keep the template)
+.env
+.env.local
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# uv
+.uv/
+
+# IDE / tooling
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local MCP configuration
+.mcp.json
