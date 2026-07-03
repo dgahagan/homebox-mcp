@@ -32,14 +32,14 @@ The order below matters: config first (1.1), then the helpers everything else us
 
 ## Phase 2 — Feature-complete core (P1 new tools)
 
-- [ ] 2.1 **`move_item(identifier, location)` (S)** — `PATCH /entities/{id}` with `parentId` (verified wipe-safe in review). Accepts location name or path per 1.11.
-- [ ] 2.2 **`set_item(...)` general editor (M)** — mirrors `set_location`: `new_name`, `description`, `notes`, `quantity`, `purchase_price/date/from`, `insured`, `archived`, `fields`. Quantity goes via PATCH; the rest via the `_preserve_item_body` PUT. (Sold-lifecycle fields stay in v1.1.)
-- [ ] 2.3 **`set_tags` via PATCH (S)** — swap the GET→preserve→PUT for `PATCH {tagIds}` (verified wipe-safe). Same for the tags arm of `set_location`. `_preserve_item_body` stays for everything PATCH can't do.
-- [ ] 2.4 **Delete tools (M)** — `delete_item`, `delete_location`, `delete_tag`, `delete_attachment`. Safety per decision: required `confirm` param that must equal the target's exact name (server re-reads the target and compares before `DELETE`); `destructiveHint` annotation. `delete_location` refuses non-empty locations unless `confirm_nonempty=True`.
-- [ ] 2.5 **Attachment management (M)** — `list_attachments(identifier)` returning ids/types/titles/sizes; `rename_attachment(identifier, attachment_id, title)`; `get_attachment(identifier, attachment_id, save_to)` downloading to a local path (so the assistant can re-read an attached manual); delete covered by 2.4.
-- [ ] 2.6 **Tag-filtered search (S)** — `search_items(query?, tags?: list[str])` using `GET /entities?tags=` (resolve names → ids). Query and tags composable.
-- [ ] 2.7 **Item-in-item nesting (S)** — `location_contents(recursive=True)` recurses into *all* children, not just `isLocation` ones, so items inside items (camera bag → lenses) are found; each result keeps its full path.
-- [ ] 2.8 **MCP tool annotations (S)** — `readOnlyHint` on all read tools, `destructiveHint` on deletes, `idempotentHint` where true. Requires bumping `mcp` to a version with `ToolAnnotations` support on `@mcp.tool` (verify exact floor when implementing; adjust the PEP 723 header + pyproject together).
+- [x] 2.1 **`move_item(identifier, location)` (S)** — done; live-verified price/fields/assetId untouched after the PATCH move. *(done 2026-07-03)*
+- [x] 2.2 **`set_item(...)` general editor (M)** — done; quantity-only edits use PATCH, everything else the preserve-PUT. *(done 2026-07-03)*
+- [x] 2.3 **`set_tags` via PATCH (S)** — done for `set_tags`. **Deviation:** `set_location`'s tags arm keeps the single full PUT — it must echo `tagIds` in its PUT anyway (PUT-clears), so a separate PATCH would just add a second write. *(done 2026-07-03)*
+- [x] 2.4 **Delete tools (M)** — done as designed. Discovered + documented: force-deleting a non-empty location cascades sub-locations but ORPHANS items to the top level. *(done 2026-07-03)*
+- [x] 2.5 **Attachment management (M)** — done: list (ids/types/titles/mime), rename (title/type/primary via PUT merge), download (dir or file path, extension from content-type). Live round-trip verified. *(done 2026-07-03)*
+- [x] 2.6 **Tag-filtered search (S)** — done; unknown tag names error listing the problem, query+tags compose. *(done 2026-07-03)*
+- [x] 2.7 **Item-in-item nesting (S)** — done; nested item found with its full path in live test. **Discovery en route:** `GET /entities` returns non-location entities ONLY — sub-locations were never visible to `parentIds` queries (latent bug in the original `location_contents` too). Sub-locations now come from the tree; `delete_location` counts both kinds. *(done 2026-07-03)*
+- [x] 2.8 **MCP tool annotations (S)** — done: readOnly ×9, idempotent ×13, destructive ×4; `mcp` floor bumped to >=1.10. *(done 2026-07-03)*
 
 ## Phase 3 — Packaging, tests, distribution
 

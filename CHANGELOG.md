@@ -24,6 +24,20 @@ versioning: [SemVer](https://semver.org/).
 - `set_location`'s `fields` values are typed by JSON type (was text-only).
 
 ### Added
+- `move_item(identifier, location)` — move an item via partial PATCH.
+- `set_item(...)` — general item editor (rename, description, notes, quantity,
+  purchase info, insured/archived, custom fields); quantity-only edits use
+  PATCH.
+- Confirm-gated delete tools: `delete_item`, `delete_location` (refuses
+  non-empty unless `confirm_nonempty=True`; sub-locations cascade, items are
+  orphaned), `delete_tag`, `delete_attachment` — `confirm` must equal the
+  target's exact name; all carry the MCP `destructiveHint` annotation.
+- Attachment management: `list_attachments` (ids/types/titles),
+  `get_attachment` (download to a local path), `rename_attachment`
+  (title/type/primary).
+- `search_items` accepts `tags` (tag names) and/or `query`.
+- MCP tool annotations (`readOnlyHint`/`idempotentHint`/`destructiveHint`) on
+  all tools.
 - `HOMEBOX_ALIAS_FIELD` env var: name one custom field as a stable item
   identifier (items resolve by it; summaries surface it). Previously the
   `item_id` field name was hard-coded.
@@ -40,6 +54,14 @@ versioning: [SemVer](https://semver.org/).
 - This changelog.
 
 ### Fixed
+- `location_contents` never listed sub-locations on Homebox 0.26.2:
+  `GET /entities` returns non-location entities only, so location children
+  were invisible to `parentIds` queries (latent upstream-behavior bug).
+  Sub-locations now come from the entity tree; `delete_location`'s emptiness
+  check counts both kinds.
+- `location_contents(recursive=True)` now finds items nested inside items
+  (0.26 unified entities — e.g. lenses inside a camera bag).
+- `set_tags` uses partial PATCH instead of the GET→preserve→PUT cycle.
 - Pagination: entity listings over one page (200 entities) were silently
   truncated, breaking search/dedupe/warranty sweeps on large inventories.
 - API failures now surface as legible tool errors (HTTP status + Homebox's

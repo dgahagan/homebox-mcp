@@ -13,7 +13,11 @@ do intake without hand-rolling `curl`.
 
 | Tool | Purpose |
 |------|---------|
-| `search_items(query, limit)` | Keyword search → items with assetId, item_id, location |
+| `search_items(query?, tags?, limit)` | Keyword and/or tag-name search → items with assetId, alias field, location |
+| `move_item(identifier, location)` | Move an item to another location (partial PATCH — nothing else changes) |
+| `set_item(identifier, ...)` | General item editor: rename, description, notes, quantity, purchase info, insured/archived, custom fields |
+| `list_attachments(identifier)` / `get_attachment(...)` / `rename_attachment(...)` | List (with ids), download, and retitle/retype attachments |
+| `delete_item` / `delete_location` / `delete_tag` / `delete_attachment` | Confirm-gated deletes (`confirm` must equal the target's exact name); `delete_location` refuses non-empty locations unless `confirm_nonempty=True` |
 | `get_item(identifier)` | Full detail by **assetId** (`000-028`), the **alias custom field** (`$HOMEBOX_ALIAS_FIELD`), or name |
 | `list_locations()` | The full location tree as an indented outline |
 | `location_contents(location, recursive=False)` | What's in a location/tote (items + sub-locations); `recursive=True` walks the whole subtree and returns every nested item with its full location path — use for locations like Garage/Basement that have sub-locations |

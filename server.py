@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mcp>=1.2", "httpx>=0.27", "pillow>=10", "pillow-heif>=0.16"]
+# dependencies = ["mcp>=1.10", "httpx>=0.27", "pillow>=10", "pillow-heif>=0.16"]
 # ///
 """Homebox MCP server.
 
@@ -31,6 +31,7 @@ from typing import Any, Optional
 import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import ToolAnnotations
 
 __version__ = "0.9.0"
 
@@ -77,6 +78,11 @@ _client = httpx.Client(
 )
 
 mcp = FastMCP("homebox")
+
+# Client hints: reads can run without prompting; deletes should prompt hard.
+_READONLY = ToolAnnotations(readOnlyHint=True)
+_IDEMPOTENT = ToolAnnotations(idempotentHint=True)
+_DESTRUCTIVE = ToolAnnotations(destructiveHint=True)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +168,20 @@ def _put(path: str, body: dict) -> Any:
     r = _client.put(path, json=body)
     r.raise_for_status()
     return r.json() if r.content else None
+
+
+def _patch(path: str, body: dict) -> Any:
+    """Partial update. PATCH /entities/{id} accepts parentId / quantity /
+    tagIds / entityTypeId and — unlike PUT — leaves every omitted field alone,
+    so no preserve-body dance is needed for those keys."""
+    r = _client.patch(path, json=body)
+    r.raise_for_status()
+    return r.json() if r.content else None
+
+
+def _delete_path(path: str) -> None:
+    r = _client.delete(path)
+    r.raise_for_status()
 
 
 def _rfc3339(d: str) -> str:
@@ -313,16 +333,22 @@ def _summarize(entity: dict, with_path: bool = False) -> dict:
 def _search_all(
     q: Optional[str] = None,
     parent_ids: Optional[str] = None,
+    tags: Optional[list[str]] = None,
     page_size: int = 200,
 ) -> list[dict]:
     """Every matching entity, following pagination until the reported `total`
     is reached (a single page silently truncates inventories larger than the
-    page size). Results are lightweight summaries — no `fields`, empty
-    `assetId`; fetch GET /entities/{id} for full detail."""
+    page size). `tags` is a list of tag IDS (repeated query params). Results
+    are lightweight summaries — no `fields`, empty `assetId`; fetch
+    GET /entities/{id} for full detail.
+
+    NOTE: /entities returns NON-LOCATION entities only (items) — location
+    children never appear here, even with parentIds. Locations come from
+    /entities/tree (see _walk_tree/_find_location)."""
     out: list[dict] = []
     page = 1
     while True:
-        data = _get("/entities", q=q, parentIds=parent_ids,
+        data = _get("/entities", q=q, parentIds=parent_ids, tags=tags,
                     page=page, pageSize=page_size)
         if isinstance(data, dict):
             batch = data.get("items") or data.get("entities") or []
@@ -418,21 +444,36 @@ def _resolve_fuzzy(identifier: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 # Tools — read
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 @_tool_errors
-def search_items(query: str, limit: int = 20) -> list[dict]:
-    """Search inventory items by name/keyword.
+def search_items(
+    query: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Search inventory items by name/keyword and/or by tag names (AND of
+    both when both given — e.g. everything tagged "power-tool").
 
     Returns items (not locations) with their immediate location, assetId, and
     the alias custom field (if $HOMEBOX_ALIAS_FIELD is configured). Use
     get_item for full detail on one result.
     """
-    results = [e for e in _search_all(q=query) if not _is_location(e)]
+    tag_ids = None
+    if tags:
+        known = {t["name"].lower(): t["id"] for t in (_get("/tags") or [])}
+        missing = [t for t in tags if t.lower() not in known]
+        if missing:
+            raise ToolError(f"unknown tag(s) {missing} — see list_tags")
+        tag_ids = [known[t.lower()] for t in tags]
+    if not query and not tag_ids:
+        raise ToolError("pass query and/or tags")
+    results = [e for e in _search_all(q=query, tags=tag_ids)
+               if not _is_location(e)]
     # list responses omit assetId/fields, so fetch full detail for the page
     return [_summarize(_get(f"/entities/{e['id']}")) for e in results[:limit]]
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 @_tool_errors
 def get_item(identifier: str) -> dict:
     """Get full detail for one item by assetId (e.g. 000-028), alias custom
@@ -467,7 +508,7 @@ def get_item(identifier: str) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 @_tool_errors
 def list_locations() -> str:
     """Return the full location tree as an indented outline."""
@@ -485,7 +526,7 @@ def list_locations() -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 @_tool_errors
 def location_contents(location: str, recursive: bool = False) -> dict:
     """List what is in a location (e.g. a tote or shelf), by location name.
@@ -500,34 +541,40 @@ def location_contents(location: str, recursive: bool = False) -> dict:
     target, err = _find_location(location)
     if err:
         return {"error": err}
+    node = target["node"]
 
     if not recursive:
-        children = _search_all(parent_ids=target["id"])
-        sublocs = [e.get("name") for e in children if _is_location(e)]
         return {
             "location": location,
             "items": [_summarize(_get(f"/entities/{e['id']}"))
-                      for e in children if not _is_location(e)],
-            "sub_locations": sublocs,
+                      for e in _search_all(parent_ids=target["id"])],
+            # /entities never returns locations — sub-locations come from the tree
+            "sub_locations": sorted(c.get("name") or ""
+                                    for c in node.get("children") or []),
         }
 
     results: list[dict] = []
 
-    def walk(node: dict, path: list[str]) -> None:
-        for e in _search_all(parent_ids=node["id"]):
-            if _is_location(e):
-                walk(e, path + [e.get("name")])
-            else:
-                full = _get(f"/entities/{e['id']}")
-                summary = _summarize(full)
-                summary["location"] = " → ".join(path)
-                results.append(summary)
+    def walk_items(parent_id: str, path: list[str]) -> None:
+        for e in _search_all(parent_ids=parent_id):
+            full = _get(f"/entities/{e['id']}")
+            summary = _summarize(full)
+            summary["location"] = " → ".join(path)
+            results.append(summary)
+            # 0.26 unified entities: items can contain items (a camera bag
+            # holding lenses), so recurse into items too
+            walk_items(e["id"], path + [e.get("name") or ""])
 
-    walk(target["node"], [location])
+    def walk_loc(n: dict, path: list[str]) -> None:
+        walk_items(n["id"], path)
+        for c in n.get("children") or []:
+            walk_loc(c, path + [c.get("name") or ""])
+
+    walk_loc(node, [location])
     return {"location": location, "items": results, "recursive": True}
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 @_tool_errors
 def list_tags(detail: bool = False) -> Any:
     """List all tag (label) names. Set `detail=True` to instead return full
@@ -555,7 +602,7 @@ def list_tags(detail: bool = False) -> Any:
     return sorted(out, key=lambda x: x["name"])
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 @_tool_errors
 def warranties_expiring(
     before: Optional[str] = None,
@@ -788,6 +835,100 @@ def attach_location_photo(
             "type": "photo", "primary": primary}
 
 
+def _resolve_any(identifier: str) -> Optional[dict]:
+    """Item (fuzzy) or location by name/path — full entity detail, or None."""
+    e = _resolve_fuzzy(identifier)
+    if e:
+        return e
+    loc, _ = _find_location(identifier)
+    return _get(f"/entities/{loc['id']}") if loc else None
+
+
+@mcp.tool(annotations=_READONLY)
+@_tool_errors
+def list_attachments(identifier: str) -> list[dict]:
+    """List an item's (or location's) attachments with their ids — the handle
+    needed by get_attachment / rename_attachment / delete_attachment.
+    `identifier` is assetId / alias field / name, or a location name/path."""
+    e = _resolve_any(identifier)
+    if not e:
+        raise ToolError(f"no item or location found matching '{identifier}'")
+    return [{
+        "id": a.get("id"),
+        "type": a.get("type"),
+        "title": a.get("title") or (a.get("document") or {}).get("title"),
+        "primary": a.get("primary"),
+        "mimeType": a.get("mimeType"),
+        "createdAt": a.get("createdAt"),
+    } for a in e.get("attachments") or []]
+
+
+def _find_attachment(entity: dict, attachment_id: str) -> Optional[dict]:
+    for a in entity.get("attachments") or []:
+        if a.get("id") == attachment_id:
+            return a
+    return None
+
+
+@mcp.tool()
+@_tool_errors
+def get_attachment(identifier: str, attachment_id: str, save_to: str) -> dict:
+    """Download one attachment (see list_attachments for ids) to a local path,
+    so its content — e.g. an attached manual or receipt — can be read.
+    `save_to` is a directory (keeps a name based on the title) or a full file
+    path."""
+    e = _resolve_any(identifier)
+    if not e:
+        raise ToolError(f"no item or location found matching '{identifier}'")
+    a = _find_attachment(e, attachment_id)
+    if not a:
+        return {"error": f"no attachment with id '{attachment_id}' on "
+                         f"'{e.get('name')}' (see list_attachments)"}
+    r = _client.get(f"/entities/{e['id']}/attachments/{attachment_id}")
+    r.raise_for_status()
+    dest = Path(save_to).expanduser()
+    if dest.is_dir():
+        title = a.get("title") or (a.get("document") or {}).get("title") or attachment_id
+        safe = "".join(c if c.isalnum() or c in "-_. " else "-" for c in title)
+        ext = mimetypes.guess_extension(
+            (r.headers.get("content-type") or "").split(";")[0]) or ""
+        dest = dest / (safe if safe.lower().endswith(ext.lower()) or not ext
+                       else safe + ext)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(r.content)
+    return {"ok": True, "path": str(dest), "bytes": len(r.content),
+            "mimeType": (r.headers.get("content-type") or "").split(";")[0]}
+
+
+@mcp.tool(annotations=_IDEMPOTENT)
+@_tool_errors
+def rename_attachment(
+    identifier: str,
+    attachment_id: str,
+    title: Optional[str] = None,
+    doc_type: Optional[str] = None,
+    primary: Optional[bool] = None,
+) -> dict:
+    """Update an attachment's title, type (manual/attachment/warranty/receipt/
+    photo), or primary flag (see list_attachments for ids). Only the args you
+    pass change; the rest is re-sent as-is."""
+    e = _resolve_any(identifier)
+    if not e:
+        raise ToolError(f"no item or location found matching '{identifier}'")
+    a = _find_attachment(e, attachment_id)
+    if not a:
+        return {"error": f"no attachment with id '{attachment_id}' on "
+                         f"'{e.get('name')}' (see list_attachments)"}
+    body = {
+        "title": _attachment_title(title) if title is not None
+        else (a.get("title") or (a.get("document") or {}).get("title") or ""),
+        "type": doc_type if doc_type is not None else a.get("type"),
+        "primary": primary if primary is not None else bool(a.get("primary")),
+    }
+    _put(f"/entities/{e['id']}/attachments/{attachment_id}", body)
+    return {"ok": True, "entity": e.get("name"), **body}
+
+
 # ---------------------------------------------------------------------------
 # Tools — bulk intake (photo pipeline / CSV import)
 # ---------------------------------------------------------------------------
@@ -872,7 +1013,7 @@ def create_location(
     return {"ok": True, "id": lid, "name": name, "parent": parent}
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def set_location_manifest(location: str, description: str) -> dict:
     """Set a location's `description` to a contents manifest (a "what lives in
@@ -903,7 +1044,7 @@ def _entity_type_id(name: str) -> Optional[str]:
     return None
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def set_location(
     location: str,
@@ -1037,7 +1178,7 @@ def _preserve_item_body(full: dict) -> dict:
     return body
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def set_warranty(
     identifier: str,
@@ -1074,7 +1215,7 @@ def set_warranty(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def set_fields(identifier: str, fields: dict) -> dict:
     """Create or update custom fields on an existing item (assetId / alias
@@ -1102,7 +1243,7 @@ def set_fields(identifier: str, fields: dict) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def set_identity(
     identifier: str,
@@ -1139,6 +1280,99 @@ def set_identity(
     }
 
 
+@mcp.tool(annotations=_IDEMPOTENT)
+@_tool_errors
+def move_item(identifier: str, location: str) -> dict:
+    """Move an item to another location (assetId / alias field / exact name).
+
+    `location` is a location name or /-separated path (see list_locations).
+    Uses a partial PATCH, so nothing else on the item changes."""
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
+    m, lerr = _find_location(location)
+    if lerr:
+        return {"error": lerr}
+    _patch(f"/entities/{full['id']}", {"id": full["id"], "parentId": m["id"]})
+    return {"ok": True, "assetId": full.get("assetId"),
+            "name": full.get("name"),
+            "location_path": _location_path(full["id"]) or m["path"]}
+
+
+@mcp.tool(annotations=_IDEMPOTENT)
+@_tool_errors
+def set_item(
+    identifier: str,
+    new_name: Optional[str] = None,
+    description: Optional[str] = None,
+    notes: Optional[str] = None,
+    quantity: Optional[int] = None,
+    purchase_price: Optional[float] = None,
+    purchase_date: Optional[str] = None,
+    purchase_from: Optional[str] = None,
+    insured: Optional[bool] = None,
+    archived: Optional[bool] = None,
+    fields: Optional[dict] = None,
+) -> dict:
+    """General item editor (assetId / alias field / exact name): rename, edit
+    description/notes/quantity, purchase info, insured/archived flags, and
+    custom fields in one call.
+
+    Only the args you pass are changed. Quantity-only changes go via a partial
+    PATCH; anything else uses a full-body PUT that preserves the rest of the
+    item (the 0.26 PUT-clears gotcha). `fields` maps custom-field name ->
+    value, typed by JSON type (see set_fields). To move an item use move_item;
+    for warranty/identity/tags see set_warranty/set_identity/set_tags."""
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
+    iid = full["id"]
+
+    others = [new_name, description, notes, purchase_price, purchase_date,
+              purchase_from, insured, archived, fields]
+    if quantity is not None and all(v is None for v in others):
+        _patch(f"/entities/{iid}", {"id": iid, "quantity": quantity})
+    else:
+        body = _preserve_item_body(full)
+        if new_name is not None:
+            body["name"] = new_name
+        if description is not None:
+            body["description"] = description
+        if notes is not None:
+            body["notes"] = notes
+        if quantity is not None:
+            body["quantity"] = quantity
+        if purchase_price is not None:
+            body["purchasePrice"] = purchase_price
+        if purchase_date is not None:
+            body["purchaseDate"] = _rfc3339(purchase_date)
+        if purchase_from is not None:
+            body["purchaseFrom"] = purchase_from
+        if insured is not None:
+            body["insured"] = insured
+        if archived is not None:
+            body["archived"] = archived
+        for fname, fval in (fields or {}).items():
+            if fval is not None:
+                _upsert_field(body, fname, fval, _field_type(fval))
+        _put(f"/entities/{iid}", body)
+    after = _get(f"/entities/{iid}")
+    return {
+        "ok": True,
+        "assetId": after.get("assetId"),
+        "name": after.get("name"),
+        "description": after.get("description") or None,
+        "notes": after.get("notes") or None,
+        "quantity": after.get("quantity"),
+        "purchasePrice": after.get("purchasePrice") or None,
+        "purchaseDate": after.get("purchaseDate") or None,
+        "purchaseFrom": after.get("purchaseFrom") or None,
+        "insured": after.get("insured"),
+        "archived": after.get("archived"),
+        "fields": {f.get("name"): _field_value(f) for f in after.get("fields") or []},
+    }
+
+
 def _ensure_tag_ids(names: list[str]) -> list[str]:
     """Resolve tag names to ids, case-insensitively, creating any that don't
     exist yet."""
@@ -1154,7 +1388,7 @@ def _ensure_tag_ids(names: list[str]) -> list[str]:
     return ids
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def set_tags(identifier: str, tags: list[str], mode: str = "add") -> dict:
     """Add, remove, or replace tags on an existing item (assetId / alias
@@ -1164,14 +1398,12 @@ def set_tags(identifier: str, tags: list[str], mode: str = "add") -> dict:
     (drops just the named tags, keeps the rest), or "replace" (item ends up
     with exactly these tags, nothing else). Tag names are matched
     case-insensitively against list_tags and auto-created if they don't exist
-    yet. Everything else on the item (price, custom fields, photos, warranty)
-    is preserved via a full-body PUT (the 0.26 PUT-clears gotcha)."""
+    yet. Everything else on the item is untouched (partial PATCH)."""
     full, err = _resolve_exact(identifier)
     if err:
         return {"error": err}
     if mode not in ("add", "remove", "replace"):
         return {"error": f"mode must be add/remove/replace, got '{mode}'"}
-    body = _preserve_item_body(full)
     current = {t["name"].lower(): t["id"] for t in (full.get("tags") or [])}
     if mode == "replace":
         new_ids = _ensure_tag_ids(tags)
@@ -1183,8 +1415,7 @@ def set_tags(identifier: str, tags: list[str], mode: str = "add") -> dict:
         for tid in _ensure_tag_ids(tags):
             if tid not in new_ids:
                 new_ids.append(tid)
-    body["tagIds"] = new_ids
-    _put(f"/entities/{full['id']}", body)
+    _patch(f"/entities/{full['id']}", {"id": full["id"], "tagIds": new_ids})
     after = _get(f"/entities/{full['id']}")
     return {
         "ok": True,
@@ -1201,7 +1432,7 @@ def _tag_by_name(name: str) -> Optional[dict]:
     return None
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def set_tag(
     name: str,
@@ -1256,6 +1487,106 @@ def set_tag(
     }
 
 
+# ---------------------------------------------------------------------------
+# Tools — delete (confirm-gated)
+# ---------------------------------------------------------------------------
+def _confirm_gate(kind: str, actual_name: str, confirm: str) -> Optional[dict]:
+    """Deletes require `confirm` to equal the target's exact name (case-
+    sensitive) so a resolver surprise can never delete the wrong thing."""
+    if confirm != actual_name:
+        return {"error": f"not deleted: confirm must equal the {kind}'s exact "
+                         f"name '{actual_name}' (got '{confirm}')"}
+    return None
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+@_tool_errors
+def delete_item(identifier: str, confirm: str) -> dict:
+    """PERMANENTLY delete an item (assetId / alias field / exact name),
+    including its attachments. `confirm` must equal the item's exact name.
+    There is no undo."""
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
+    if _is_location(full):
+        return {"error": f"'{identifier}' is a location — use delete_location"}
+    gate = _confirm_gate("item", full.get("name") or "", confirm)
+    if gate:
+        return gate
+    _delete_path(f"/entities/{full['id']}")
+    return {"ok": True, "deleted": full.get("name"),
+            "assetId": full.get("assetId")}
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+@_tool_errors
+def delete_location(
+    location: str,
+    confirm: str,
+    confirm_nonempty: bool = False,
+) -> dict:
+    """PERMANENTLY delete a location (name or /-separated path). `confirm`
+    must equal the location's exact name. A location that still contains items
+    or sub-locations is refused unless `confirm_nonempty=True` — sub-locations
+    are deleted with it, and its items are ORPHANED to the top level (not
+    deleted). There is no undo."""
+    m, err = _find_location(location)
+    if err:
+        return {"error": err}
+    gate = _confirm_gate("location", (m["node"].get("name") or ""), confirm)
+    if gate:
+        return gate
+    sublocs = m["node"].get("children") or []       # tree: /entities omits locations
+    items = _search_all(parent_ids=m["id"])
+    if (sublocs or items) and not confirm_nonempty:
+        return {"error": f"not deleted: '{m['path']}' contains {len(items)} "
+                         f"item(s), {len(sublocs)} sub-location(s). Move them "
+                         f"out, or pass confirm_nonempty=True (sub-locations "
+                         f"are deleted; items are orphaned to the top level)."}
+    _delete_path(f"/entities/{m['id']}")
+    return {"ok": True, "deleted": m["path"],
+            "contained": {"items": len(items), "sub_locations": len(sublocs)}}
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+@_tool_errors
+def delete_tag(name: str, confirm: str) -> dict:
+    """PERMANENTLY delete a tag itself (it is removed from every tagged item;
+    the items survive). `confirm` must equal the tag's exact name."""
+    t = _tag_by_name(name)
+    if not t:
+        return {"error": f"no tag named '{name}' (see list_tags)"}
+    gate = _confirm_gate("tag", t.get("name") or "", confirm)
+    if gate:
+        return gate
+    _delete_path(f"/tags/{t['id']}")
+    return {"ok": True, "deleted": t.get("name")}
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+@_tool_errors
+def delete_attachment(identifier: str, attachment_id: str, confirm: str) -> dict:
+    """PERMANENTLY delete one attachment from an item or location (see
+    list_attachments for ids). `confirm` must equal the attachment's exact
+    title."""
+    e = _resolve_any(identifier)
+    if not e:
+        raise ToolError(f"no item or location found matching '{identifier}'")
+    a = _find_attachment(e, attachment_id)
+    if not a:
+        return {"error": f"no attachment with id '{attachment_id}' on "
+                         f"'{e.get('name')}' (see list_attachments)"}
+    title = a.get("title") or (a.get("document") or {}).get("title") or ""
+    gate = _confirm_gate("attachment", title, confirm)
+    if gate:
+        return gate
+    _delete_path(f"/entities/{e['id']}/attachments/{attachment_id}")
+    return {"ok": True, "deleted": title, "from": e.get("name")}
+
+
+# ---------------------------------------------------------------------------
+# Tools — labels
+# ---------------------------------------------------------------------------
 def _label_dir(out_dir: Optional[str]) -> Path:
     d = Path(out_dir).expanduser() if out_dir else (
         Path(HOMEBOX_LABEL_DIR).expanduser() if HOMEBOX_LABEL_DIR else Path.cwd()
@@ -1313,7 +1644,7 @@ def qrcode(data: str, out_dir: Optional[str] = None) -> dict:
     return {"ok": True, "path": str(path), "bytes": len(r.content)}
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 @_tool_errors
 def field_index(field_name: Optional[str] = None) -> dict:
     """Return {field_value: assetId} for every entity that has the named
@@ -1334,7 +1665,7 @@ def field_index(field_name: Optional[str] = None) -> dict:
     return out
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def set_primary_photos() -> dict:
     """Ensure every entity with photos has a primary image set (finalize step
@@ -1342,7 +1673,7 @@ def set_primary_photos() -> dict:
     return {"ok": True, "result": _post("/actions/set-primary-photos", {})}
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def create_thumbnails() -> dict:
     """Generate any missing photo thumbnails (finalize step after a bulk photo
@@ -1350,7 +1681,7 @@ def create_thumbnails() -> dict:
     return {"ok": True, "result": _post("/actions/create-missing-thumbnails", {})}
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 @_tool_errors
 def barcode_lookup(code: str) -> dict:
     """Look up a UPC/EAN barcode → name/manufacturer/model (optional path for
