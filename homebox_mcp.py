@@ -1373,6 +1373,85 @@ def set_item(
     }
 
 
+@mcp.tool(annotations=_IDEMPOTENT)
+@_tool_errors
+def mark_sold(
+    identifier: str,
+    sold_price: Optional[float] = None,
+    sold_to: Optional[str] = None,
+    sold_date: Optional[str] = None,
+    sold_notes: Optional[str] = None,
+    clear: bool = False,
+) -> dict:
+    """Record that an item was sold (assetId / alias field / exact name):
+    price, buyer, YYYY-MM-DD date, notes — only the args you pass are set.
+    `clear=True` instead erases all four sold fields (un-sells the item).
+    Everything else on the item is preserved via a full-body PUT. Pair with
+    set_item(archived=True) if the item should also leave active inventory."""
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
+    body = _preserve_item_body(full)
+    if clear:
+        for k in ("soldDate", "soldTo", "soldPrice", "soldNotes"):
+            body.pop(k, None)  # PUT omission clears (the 0.26 PUT-clears gotcha)
+    else:
+        if sold_price is not None:
+            body["soldPrice"] = sold_price
+        if sold_to is not None:
+            body["soldTo"] = sold_to
+        if sold_date is not None:
+            body["soldDate"] = _rfc3339(sold_date)
+        if sold_notes is not None:
+            body["soldNotes"] = sold_notes
+    _put(f"/entities/{full['id']}", body)
+    after = _get(f"/entities/{full['id']}")
+    return {
+        "ok": True,
+        "assetId": after.get("assetId"),
+        "name": after.get("name"),
+        "soldPrice": after.get("soldPrice") or None,
+        "soldTo": after.get("soldTo") or None,
+        "soldDate": after.get("soldDate") or None,
+        "soldNotes": after.get("soldNotes") or None,
+    }
+
+
+@mcp.tool()
+@_tool_errors
+def duplicate_item(
+    identifier: str,
+    copy_attachments: bool = False,
+    copy_custom_fields: bool = True,
+    copy_maintenance: bool = False,
+    prefix: str = "Copy of ",
+) -> dict:
+    """Duplicate an existing item (assetId / alias field / exact name), e.g.
+    "I bought a second one". `prefix` is prepended to the new item's name.
+    Copies custom fields by default; attachments and maintenance log only on
+    request. NOTE: copied custom fields include the alias field verbatim — if
+    you use one, give the copy its own value via set_fields right after.
+    Returns the new item's id and assetId."""
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
+    created = _post(f"/entities/{full['id']}/duplicate", {
+        "copyAttachments": copy_attachments,
+        "copyCustomFields": copy_custom_fields,
+        "copyMaintenance": copy_maintenance,
+        "copyPrefix": prefix,
+    })
+    new_id = (created or {}).get("id")
+    try:
+        _post("/actions/ensure-asset-ids", {})
+    except Exception:
+        pass
+    after = _get(f"/entities/{new_id}") if new_id else {}
+    return {"ok": True, "id": new_id, "assetId": after.get("assetId"),
+            "name": after.get("name"),
+            "duplicated_from": full.get("name")}
+
+
 def _ensure_tag_ids(names: list[str]) -> list[str]:
     """Resolve tag names to ids, case-insensitively, creating any that don't
     exist yet."""
@@ -1690,6 +1769,192 @@ def barcode_lookup(code: str) -> dict:
         return {"ok": True, "result": _get("/products/search-from-barcode", data=code)}
     except Exception as exc:  # noqa: BLE001
         return {"error": f"barcode lookup failed: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Tools — maintenance log
+# ---------------------------------------------------------------------------
+def _maintenance_summary(e: dict) -> dict:
+    out = {
+        "id": e.get("id"),
+        "name": e.get("name"),
+        "description": e.get("description") or None,
+        "completedDate": (e.get("completedDate") or "")[:10] or None,
+        "scheduledDate": (e.get("scheduledDate") or "")[:10] or None,
+        "cost": e.get("cost"),
+    }
+    # the global /maintenance listing includes the owning entity
+    for k in ("itemName", "entityName", "itemID", "entityId"):
+        if e.get(k):
+            out["item"] = e.get("itemName") or e.get("entityName") or e.get(k)
+            break
+    return out
+
+
+def _find_maintenance_entry(entry_id: str) -> Optional[dict]:
+    """There is no GET /maintenance/{id}; find an entry via the global list."""
+    for status in ("both",):
+        for e in _get("/maintenance", status=status) or []:
+            if e.get("id") == entry_id:
+                return e
+    return None
+
+
+@mcp.tool()
+@_tool_errors
+def log_maintenance(
+    identifier: str,
+    name: str,
+    description: Optional[str] = None,
+    completed_date: Optional[str] = None,
+    scheduled_date: Optional[str] = None,
+    cost: Optional[float] = None,
+) -> dict:
+    """Add a maintenance-log entry to an item (assetId / alias field / exact
+    name) — e.g. "changed the mower oil today" (completed_date) or "sharpen
+    blades in spring" (scheduled_date). Dates are YYYY-MM-DD; `cost` is a
+    number. Returns the new entry's id."""
+    full, err = _resolve_exact(identifier)
+    if err:
+        return {"error": err}
+    body: dict = {"name": name}
+    if description is not None:
+        body["description"] = description
+    if completed_date:
+        body["completedDate"] = _rfc3339(completed_date)
+    if scheduled_date:
+        body["scheduledDate"] = _rfc3339(scheduled_date)
+    if cost is not None:
+        body["cost"] = str(cost)  # API cost field is string-typed
+    created = _post(f"/entities/{full['id']}/maintenance", body)
+    return {"ok": True, "item": full.get("name"),
+            "entry": _maintenance_summary(created or {})}
+
+
+@mcp.tool(annotations=_READONLY)
+@_tool_errors
+def list_maintenance(
+    identifier: Optional[str] = None,
+    status: str = "both",
+) -> list[dict]:
+    """List maintenance entries — for one item (assetId / alias field / name)
+    or, with no identifier, across the whole inventory ("what maintenance is
+    due?"). `status` is "scheduled" (upcoming), "completed", or "both"."""
+    if status not in ("scheduled", "completed", "both"):
+        raise ToolError(f"status must be scheduled/completed/both, got '{status}'")
+    if identifier:
+        e = _resolve_fuzzy(identifier)
+        if not e:
+            raise ToolError(f"no item found matching '{identifier}'")
+        entries = _get(f"/entities/{e['id']}/maintenance", status=status) or []
+    else:
+        entries = _get("/maintenance", status=status) or []
+    return [_maintenance_summary(e) for e in entries]
+
+
+@mcp.tool(annotations=_IDEMPOTENT)
+@_tool_errors
+def set_maintenance(
+    entry_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    completed_date: Optional[str] = None,
+    scheduled_date: Optional[str] = None,
+    cost: Optional[float] = None,
+) -> dict:
+    """Edit a maintenance entry (see list_maintenance for ids) — e.g. mark a
+    scheduled entry completed by setting completed_date. Only the args you
+    pass change; the rest of the entry is re-sent as-is (the update is a full
+    PUT)."""
+    cur = _find_maintenance_entry(entry_id)
+    if not cur:
+        return {"error": f"no maintenance entry with id '{entry_id}' "
+                         f"(see list_maintenance)"}
+    body = {
+        "name": name if name is not None else cur.get("name"),
+        "description": description if description is not None
+        else (cur.get("description") or ""),
+        "completedDate": _rfc3339(completed_date) if completed_date
+        else (cur.get("completedDate") or ""),
+        "scheduledDate": _rfc3339(scheduled_date) if scheduled_date
+        else (cur.get("scheduledDate") or ""),
+        "cost": str(cost) if cost is not None else str(cur.get("cost") or "0"),
+    }
+    updated = _put(f"/maintenance/{entry_id}", body)
+    return {"ok": True, "entry": _maintenance_summary(updated or body)}
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+@_tool_errors
+def delete_maintenance(entry_id: str, confirm: str) -> dict:
+    """PERMANENTLY delete one maintenance entry (see list_maintenance for
+    ids). `confirm` must equal the entry's exact name."""
+    cur = _find_maintenance_entry(entry_id)
+    if not cur:
+        return {"error": f"no maintenance entry with id '{entry_id}' "
+                         f"(see list_maintenance)"}
+    gate = _confirm_gate("maintenance entry", cur.get("name") or "", confirm)
+    if gate:
+        return gate
+    _delete_path(f"/maintenance/{entry_id}")
+    return {"ok": True, "deleted": cur.get("name")}
+
+
+# ---------------------------------------------------------------------------
+# Tools — reporting
+# ---------------------------------------------------------------------------
+@mcp.tool(annotations=_READONLY)
+@_tool_errors
+def inventory_stats(
+    by: str = "totals",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> Any:
+    """Inventory statistics — the cheap way to answer "what's my inventory
+    worth?" without scanning items. `by` is:
+      totals          — counts (items/locations/tags/users), total purchase
+                        price, items with warranty;
+      locations       — total value per location;
+      tags            — total value per tag;
+      purchase-price  — value over time (optional YYYY-MM-DD start/end)."""
+    if by == "totals":
+        return _get("/groups/statistics")
+    if by in ("locations", "tags"):
+        return _get(f"/groups/statistics/{by}")
+    if by == "purchase-price":
+        return _get("/groups/statistics/purchase-price", start=start, end=end)
+    raise ToolError(f"by must be totals/locations/tags/purchase-price, got '{by}'")
+
+
+@mcp.tool()
+@_tool_errors
+def export_csv(save_to: Optional[str] = None) -> dict:
+    """Export the whole inventory as a Homebox CSV (the complement of
+    import_csv; also a quick backup). Saves to `save_to` (file path or
+    directory; default: homebox-export.csv in the current directory) and
+    returns the path and row count."""
+    r = _client.get("/entities/export")
+    r.raise_for_status()
+    text = r.text
+    dest = Path(save_to).expanduser() if save_to else Path.cwd() / "homebox-export.csv"
+    if dest.is_dir():
+        dest = dest / "homebox-export.csv"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text)
+    rows = max(0, len([ln for ln in text.splitlines() if ln.strip()]) - 1)
+    return {"ok": True, "path": str(dest), "rows": rows}
+
+
+@mcp.tool(annotations=_READONLY)
+@_tool_errors
+def list_custom_fields(field: Optional[str] = None) -> Any:
+    """Discover the custom-field schema actually in use: with no arg, all
+    custom-field NAMES across the inventory; with `field`, every distinct
+    VALUE of that field. Useful before set_fields/field_index on an unfamiliar
+    instance."""
+    if field:
+        return _get("/entities/fields/values", field=field) or []
+    return _get("/entities/fields") or []
 
 
 def main() -> None:

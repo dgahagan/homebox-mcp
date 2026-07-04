@@ -25,6 +25,16 @@ suite:
 uv run --with pytest --with respx --with . pytest
 ```
 
+> **Stale-cache trap:** `--with .` caches the built package keyed on the
+> version string. If you edit `homebox_mcp.py` without bumping `__version__`,
+> pytest may import the stale cached build and miss your changes. Force a
+> rebuild with:
+>
+> ```bash
+> uv run --refresh-package homebox-mcp --reinstall-package homebox-mcp \
+>   --with pytest --with respx --with . pytest
+> ```
+
 ## Lint
 
 Code is linted with [`ruff`](https://docs.astral.sh/ruff/) (config in

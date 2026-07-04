@@ -106,7 +106,7 @@ clone workflow):
 
 ## Tools
 
-~33 tools. Reads accept a **fuzzy** identifier (assetId, alias field, exact
+~42 tools. Reads accept a **fuzzy** identifier (assetId, alias field, exact
 name, then first keyword match). Write tools require an **exact** identifier
 (assetId, alias field, or exact name) — a typo or an ambiguous match is refused
 rather than mutating the wrong item. Locations are referenced by name or
@@ -131,6 +131,7 @@ rather than mutating the wrong item. Locations are referenced by name or
 | `import_csv(csv_text)` | Bulk-create items and locations from a Homebox CSV in one multipart request. `HB.location` **auto-creates** the path hierarchy; recognizes `HB.name`, `HB.tags`, `HB.quantity`, `HB.serial_number`, `HB.model_number`, `HB.manufacturer`, `HB.notes`, `HB.purchase_*`, `HB.warranty_expires`, `HB.field.<name>`. |
 | `create_location(name, parent?, description?)` | Create a location (tote/bin/shelf) to bootstrap a new storage spot; `description` doubles as a contents manifest. |
 | `barcode_lookup(code)` | UPC/EAN → name/manufacturer/model (optional, for boxed goods). |
+| `duplicate_item(identifier, copy_attachments=False, copy_custom_fields=True, copy_maintenance=False, prefix="Copy of ")` | Duplicate an item ("I bought a second one"). Copied custom fields include the alias field verbatim — give the copy its own value after. |
 
 ### Edit
 
@@ -149,6 +150,24 @@ touch (a full-body PUT that echoes the rest of the item back — see
 | `set_tag(name, new_name?, description?, color?, icon?, parent?, clear_parent=False)` | Edit **a tag's own** metadata (rename, color, icon, parent tag for grouping) — not what's tagged on an item. Creates the tag if new. |
 | `set_location(location, new_name?, parent?, clear_parent?, description?, notes?, tags?, tags_mode?, entity_type?, asset_id?, fields?)` | General location editor: rename, move (or `clear_parent` to root), tags, notes, entity type, assetId, custom fields. |
 | `set_location_manifest(location, description)` | Set a location's contents-manifest `description` (echoes name/parent/assetId so the PUT doesn't wipe them). |
+| `mark_sold(identifier, sold_price?, sold_to?, sold_date?, sold_notes?, clear=False)` | Record a sale (price/buyer/date/notes) or `clear=True` to un-sell; pair with `set_item(archived=True)` to retire the item. |
+
+### Maintenance log
+
+| Tool | Purpose |
+|------|---------|
+| `log_maintenance(identifier, name, description?, completed_date?, scheduled_date?, cost?)` | Add an entry — "changed the mower oil today" (completed) or "sharpen blades in spring" (scheduled). |
+| `list_maintenance(identifier?, status="both")` | Entries for one item, or across the whole inventory ("what maintenance is due?"); `status` = scheduled / completed / both. |
+| `set_maintenance(entry_id, ...)` | Edit an entry — e.g. mark a scheduled one completed by setting `completed_date`. |
+| `delete_maintenance(entry_id, confirm)` | Delete one entry (`confirm` = its exact name). |
+
+### Reporting
+
+| Tool | Purpose |
+|------|---------|
+| `inventory_stats(by="totals", start?, end?)` | Totals (counts, total value, warranty count), value by location or tag, or purchase-price over time — the cheap way to answer "what's my inventory worth?". |
+| `export_csv(save_to?)` | Export the whole inventory as a Homebox CSV (complement of `import_csv`; quick backup). |
+| `list_custom_fields(field?)` | Discover the custom-field schema in use: all field names, or every distinct value of one field. |
 
 ### Attachments
 

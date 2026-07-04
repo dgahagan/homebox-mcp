@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Maintenance log: `log_maintenance`, `list_maintenance` (per-item or
+  inventory-wide, scheduled/completed/both), `set_maintenance` (e.g. mark a
+  scheduled entry completed), `delete_maintenance` (confirm-gated).
+- Reporting: `inventory_stats` (totals / by-location / by-tag /
+  purchase-price-over-time), `export_csv` (full-inventory CSV backup),
+  `list_custom_fields` (discover field names and values in use).
+- Sold lifecycle: `mark_sold` (price/buyer/date/notes, `clear=True` to
+  un-sell).
+- `duplicate_item` (copies custom fields by default; attachments/maintenance
+  opt-in; documented alias-field dedupe caveat).
+
 ## [0.9.1] - 2026-07-03
 
 ### Added
