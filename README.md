@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.dgahagan/homebox-mcp -->
 
-[![PyPI version](https://img.shields.io/pypi/v/homebox-mcp.svg)](https://pypi.org/project/homebox-mcp/)
+[![PyPI version](https://img.shields.io/pypi/v/homebox-mcp)](https://pypi.org/project/homebox-mcp/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/dgahagan/homebox-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/dgahagan/homebox-mcp/actions/workflows/ci.yml)
 
