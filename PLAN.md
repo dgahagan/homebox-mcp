@@ -43,18 +43,11 @@ The order below matters: config first (1.1), then the helpers everything else us
 
 ## Phase 3 — Packaging, tests, distribution
 
-- [ ] 3.1 **Module layout (M)** — rename `server.py` → `homebox_mcp.py` (proper PyPI module name); keep a thin `server.py` shim (with its own PEP 723 header) that imports and runs it, **so your existing user-scope MCP registration pointing at `server.py` keeps working untouched**. `pyproject.toml` (hatchling): `[project] name = "homebox-mcp"`, console script `homebox-mcp = "homebox_mcp:main"`. Both `uvx homebox-mcp` and `uv run --script server.py` work.
-- [ ] 3.2 **Tests (L)** — pytest + `respx` (httpx mocking). Priority order:
-  1. `_preserve_item_body` round-trip incl. type-keyed custom fields (the silent-regression magnet),
-  2. `_make_field`/`_field_value` typed mapping incl. float→int coercion,
-  3. `_resolve_exact` (exact / ambiguous / miss) and alias-field resolution,
-  4. pagination across page boundaries,
-  5. confirm-gated deletes (wrong confirm → refused, no DELETE issued),
-  6. `_rfc3339`, `_attachment_title`, location-path resolution.
-  Plus one in-memory FastMCP smoke test (list tools, call one read tool against mocked API).
-- [ ] 3.3 **CI (S)** — GitHub Actions: ruff + pytest on Python 3.10 and 3.13; PyPI publish via trusted publishing on tag push.
-- [ ] 3.4 **Docs overhaul (M)** — README: uvx quickstart first; config blocks for Claude Code, Claude Desktop, and generic MCP JSON; regenerate the tool table; **keep the 0.26 gotchas section** (it's the repo's best asset); state plainly this targets sysadminsmedia Homebox ≥ 0.26 and why pre-0.26 won't work; remove personal-workflow references; document `HOMEBOX_ALIAS_FIELD` / `HOMEBOX_LABEL_DIR` with the "conventions like an item_id slug field" framing as an optional pattern. Companion scripts: **keep both** (default recommendation — `heic2jpg.py` is generic, `annotate_location_photos.py` is a documented differentiator); flag here if you'd rather trim.
-- [ ] 3.5 **Publish (S)** — create the public GitHub repo, push, tag `v1.0.0`, verify PyPI publish, submit to the MCP registry / servers list.
+- [x] 3.1 **Module layout (M)** — done: `git mv server.py homebox_mcp.py` (history preserved), `main()` entry point, `server.py` shim with its own PEP 723 header, hatchling `pyproject.toml` with dynamic version from `__version__`, wheel verified (single module + `homebox-mcp` console script; installs and imports clean in an isolated venv). *(done 2026-07-03)*
+- [x] 3.2 **Tests (L)** — 33 tests, all priorities covered (preserve-body round-trip, typed field mapping incl. float→int, exact/ambiguous/miss resolve, 3-page pagination, confirm gates asserting no DELETE issued, date/title helpers, location paths, version guard incl. fail-open, error surfacing, FastMCP registration + annotations). Fully mocked via respx `assert_all_mocked=True`; conftest overrides env before import so the live instance is unreachable from tests. Command: `uv run --with pytest --with respx --with . pytest tests/ -q`. *(done 2026-07-03, Opus subagent, verified independently)*
+- [x] 3.3 **CI (S)** — `.github/workflows/ci.yml` (pytest on py3.10+3.13 via uv, ruff lint job) and `publish.yml` (tag `v*` → `uv build` → PyPI trusted publishing, `id-token: write`, environment `pypi`). Ruff passes clean repo-wide. *(done 2026-07-03)*
+- [x] 3.4 **Docs overhaul (M)** — README rebuilt: badges, uvx quickstart (Claude Code + generic JSON + clone fallback), requirements/config tables, all 33 tools regenerated from code in 6 groups, gotchas section kept and extended with the two Phase-2 discoveries, optional-conventions framing for the alias field, companion scripts kept, security + development sections. `CONTRIBUTING.md` added. *(done 2026-07-03, Opus subagent, spot-verified)*
+- [ ] 3.5 **Publish (S)** — create the public GitHub repo, push, tag, verify PyPI publish (trusted publisher must be configured on PyPI first), submit to the MCP registry / servers list. **Needs the user**; version number decision (0.9.0 as-is vs 1.0.0) happens here.
 
 ## Phase 4 — Personal migration (same working session as 1.5's breaking change)
 

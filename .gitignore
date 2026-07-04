@@ -26,3 +26,7 @@ Thumbs.db
 
 # Local MCP configuration
 .mcp.json
+
+# build artifacts
+dist/
+*.egg-info/

@@ -52,6 +52,12 @@ versioning: [SemVer](https://semver.org/).
 - Version guard: tools fail with a clear message against pre-0.26 Homebox.
 - `__version__` on the server module.
 - This changelog.
+- Packaging: `pyproject.toml` (PyPI name `homebox-mcp`, console script
+  `homebox-mcp`); the module renamed `server.py` → `homebox_mcp.py` with a
+  `server.py` compatibility shim so existing MCP registrations keep working.
+- Test suite (pytest + respx, fully mocked) and GitHub Actions CI
+  (tests on Python 3.10/3.13, ruff) + PyPI trusted-publishing workflow.
+- README overhauled for public release; CONTRIBUTING.md added.
 
 ### Fixed
 - `location_contents` never listed sub-locations on Homebox 0.26.2:
