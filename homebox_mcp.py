@@ -33,7 +33,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,13 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.9.1] - 2026-07-03
+
+### Added
+- `server.json` + `mcp-name` marker in the README for the official MCP
+  registry listing (registry ownership validation reads the PyPI README).
+
+## [0.9.0] - 2026-07-03
 
 ### Changed (BREAKING)
 - `create_item`: personal named params (`item_id`, `category`, `dossier`,
