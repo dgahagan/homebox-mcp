@@ -26,7 +26,7 @@ import os
 import sys
 import mimetypes
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -314,6 +314,13 @@ def _location_path(entity_id: str) -> str:
     return " → ".join(names)
 
 
+def _compact(d: dict) -> dict:
+    """Drop None-valued keys from a response dict. Null fields are pure token
+    overhead for the model (absence reads the same as null), and it compounds
+    fast in multi-item listings."""
+    return {k: v for k, v in d.items() if v is not None}
+
+
 def _summarize(entity: dict, with_path: bool = False) -> dict:
     out = {
         "id": entity.get("id"),
@@ -327,7 +334,7 @@ def _summarize(entity: dict, with_path: bool = False) -> dict:
     out["location"] = parent.get("name")
     if with_path and entity.get("id"):
         out["location_path"] = _location_path(entity["id"])
-    return out
+    return _compact(out)
 
 
 def _search_all(
@@ -483,11 +490,11 @@ def get_item(identifier: str) -> dict:
     e = _resolve_fuzzy(identifier)
     if not e:
         return {"error": f"no item found matching '{identifier}'"}
-    return {
+    return _compact({
         "id": e.get("id"),
         "assetId": e.get("assetId") or None,
         "name": e.get("name"),
-        "location_path": _location_path(e["id"]),
+        "location_path": _location_path(e["id"]) or None,
         "manufacturer": e.get("manufacturer") or None,
         "modelNumber": e.get("modelNumber") or None,
         "serialNumber": e.get("serialNumber") or None,
@@ -496,16 +503,16 @@ def get_item(identifier: str) -> dict:
         "purchaseDate": e.get("purchaseDate") or None,
         "purchaseFrom": e.get("purchaseFrom") or None,
         "warrantyExpires": e.get("warrantyExpires") or None,
-        "lifetimeWarranty": e.get("lifetimeWarranty"),
+        "lifetimeWarranty": e.get("lifetimeWarranty") or None,
         "notes": e.get("notes") or None,
-        "tags": [t.get("name") for t in e.get("tags") or []],
-        "fields": {f.get("name"): _field_value(f) for f in e.get("fields") or []},
+        "tags": [t.get("name") for t in e.get("tags") or []] or None,
+        "fields": {f.get("name"): _field_value(f) for f in e.get("fields") or []} or None,
         "attachments": [
-            {"type": a.get("type"), "title": a.get("title")
-             or (a.get("document") or {}).get("title")}
+            _compact({"type": a.get("type"), "title": a.get("title")
+                      or (a.get("document") or {}).get("title")})
             for a in e.get("attachments") or []
-        ],
-    }
+        ] or None,
+    })
 
 
 @mcp.tool(annotations=_READONLY)
@@ -528,7 +535,11 @@ def list_locations() -> str:
 
 @mcp.tool(annotations=_READONLY)
 @_tool_errors
-def location_contents(location: str, recursive: bool = False) -> dict:
+def location_contents(
+    location: str,
+    recursive: bool = False,
+    max_items: int = 500,
+) -> dict:
     """List what is in a location (e.g. a tote or shelf), by location name.
 
     Returns the items directly in that location plus any sub-locations (their
@@ -554,9 +565,14 @@ def location_contents(location: str, recursive: bool = False) -> dict:
         }
 
     results: list[dict] = []
+    truncated = False
 
     def walk_items(parent_id: str, path: list[str]) -> None:
+        nonlocal truncated
         for e in _search_all(parent_ids=parent_id):
+            if len(results) >= max_items:
+                truncated = True
+                return
             full = _get(f"/entities/{e['id']}")
             summary = _summarize(full)
             summary["location"] = " → ".join(path)
@@ -566,12 +582,19 @@ def location_contents(location: str, recursive: bool = False) -> dict:
             walk_items(e["id"], path + [e.get("name") or ""])
 
     def walk_loc(n: dict, path: list[str]) -> None:
+        if truncated:
+            return
         walk_items(n["id"], path)
         for c in n.get("children") or []:
             walk_loc(c, path + [c.get("name") or ""])
 
     walk_loc(node, [location])
-    return {"location": location, "items": results, "recursive": True}
+    out = {"location": location, "items": results, "recursive": True}
+    if truncated:
+        out["truncated"] = True
+        out["note"] = (f"stopped at max_items={max_items}; narrow the location "
+                       f"or raise max_items")
+    return out
 
 
 @mcp.tool(annotations=_READONLY)
@@ -772,10 +795,10 @@ def attach_document(
     """Attach a document to an item OR a location. `source` is a local file path
     or an http(s) URL (downloaded then uploaded). `doc_type` is e.g. manual,
     attachment, warranty, receipt, photo. `identifier` is assetId/alias/name
-    for an item, or a location name (tried as a fallback if no item matches —
-    for a location photo specifically, prefer attach_location_photo, which
-    defaults primary=True for wayfinding shots). Set `primary` to make a photo
-    the entity's primary image."""
+    for an item, or a location name/path (tried as a fallback if no item
+    matches). Set `primary=True` to make a photo the entity's primary image —
+    e.g. a "this is the spot" wayfinding photo on a shelf/tote location
+    (doc_type="photo")."""
     e, item_err = _resolve_exact(identifier)
     if e:
         iid, name = e["id"], e.get("name")
@@ -800,39 +823,6 @@ def attach_document(
     r = _client.post(f"/entities/{iid}/attachments", files=files, data=data)
     r.raise_for_status()
     return {"ok": True, "item": name, "attached": safe_title, "type": doc_type}
-
-
-@mcp.tool()
-@_tool_errors
-def attach_location_photo(
-    location: str,
-    source: str,
-    title: Optional[str] = None,
-    primary: bool = True,
-) -> dict:
-    """Attach a photo to a LOCATION (e.g. a shelf) and make it the location's
-    primary image. Use this to give a shelf/tote a "this is the spot" photo for
-    family wayfinding. `location` is a location name (see list_locations);
-    `source` is a local file path or an http(s) URL."""
-    m, err = _find_location(location)
-    if err:
-        return {"error": err}
-    loc_id = m["id"]
-
-    try:
-        filename, content, ctype = _load_source(source)
-    except FileNotFoundError:
-        return {"error": f"file not found: {source}"}
-
-    safe_title = _attachment_title(title) if title else filename
-    files = {"file": (filename, content, ctype)}
-    data = {"name": safe_title, "type": "photo"}
-    if primary:
-        data["primary"] = "true"
-    r = _client.post(f"/entities/{loc_id}/attachments", files=files, data=data)
-    r.raise_for_status()
-    return {"ok": True, "location": location, "attached": safe_title,
-            "type": "photo", "primary": primary}
 
 
 def _resolve_any(identifier: str) -> Optional[dict]:
@@ -962,7 +952,7 @@ def import_csv(csv_text: str) -> dict:
       HB.purchase_from, HB.purchase_time, HB.warranty_expires,
       HB.field.<name> (custom fields).
     A location-only row (HB.location set, contents described elsewhere) creates
-    just the location. After import, call set_primary_photos + create_thumbnails
+    just the location. After import, call finalize_photos
     if you attached photos. Returns the count of data rows submitted."""
     rows = max(0, len([ln for ln in csv_text.splitlines() if ln.strip()]) - 1)
     files = {"csv": ("import.csv", csv_text.encode("utf-8"), "text/csv")}
@@ -1013,30 +1003,6 @@ def create_location(
     return {"ok": True, "id": lid, "name": name, "parent": parent}
 
 
-@mcp.tool(annotations=_IDEMPOTENT)
-@_tool_errors
-def set_location_manifest(location: str, description: str) -> dict:
-    """Set a location's `description` to a contents manifest (a "what lives in
-    this bin" summary). `location` is a location name or /-separated path.
-    Echoes back name/parent/assetId so the PUT does not wipe them (0.26
-    PUT-clears gotcha)."""
-    m, err = _find_location(location)
-    if err:
-        return {"error": err}
-    lid = m["id"]
-    full = _get(f"/entities/{lid}")
-    body: dict = {"id": lid, "name": full.get("name"), "description": description}
-    if full.get("assetId"):
-        body["assetId"] = full["assetId"]
-    if (full.get("entityType") or {}).get("id"):
-        body["entityTypeId"] = full["entityType"]["id"]
-    parent = full.get("parent") or {}
-    if parent.get("id"):
-        body["parentId"] = parent["id"]
-    _put(f"/entities/{lid}", body)
-    return {"ok": True, "location": location, "manifest_chars": len(description)}
-
-
 def _entity_type_id(name: str) -> Optional[str]:
     for t in (_get("/entity-types") or []):
         if t.get("name", "").lower() == name.lower():
@@ -1054,26 +1020,17 @@ def set_location(
     description: Optional[str] = None,
     notes: Optional[str] = None,
     tags: Optional[list[str]] = None,
-    tags_mode: str = "add",
+    tags_mode: Literal["add", "remove", "replace"] = "add",
     entity_type: Optional[str] = None,
     asset_id: Optional[str] = None,
     fields: Optional[dict] = None,
 ) -> dict:
-    """Edit an existing LOCATION's own metadata (find it by its current name;
-    see list_locations). General-purpose sibling of set_location_manifest —
-    use that one if you're only setting the contents-manifest description.
-
-    Only the args you pass are changed; a full-body PUT preserves everything
-    else (existing tags, custom fields, assetId, photos) per the 0.26
-    PUT-clears gotcha. `parent` moves it under another existing location name;
-    `clear_parent=True` moves it to the root instead. `tags` are tag names
-    (auto-created if new); `tags_mode` is add (default) / remove / replace,
-    same semantics as set_tags. `entity_type` is an entity-type name (e.g.
-    "Item" to convert a location into a non-location entity) — rare, only for
-    fixing a mis-created entity. `asset_id` force-overrides the normally
-    auto-assigned assetId. `fields` is a dict of custom-field name -> value to
-    upsert (create or overwrite each named field; the value's JSON type picks
-    the field type)."""
+    """Edit a LOCATION's metadata (find it by current name or /-path): rename,
+    `description` (e.g. a contents manifest), notes, tags, custom fields
+    (values typed by JSON type). Only the args you pass change; other fields
+    are preserved. `parent` moves it under another location; `clear_parent=True`
+    moves it to the root. `entity_type` (e.g. "Item") converts a mis-created
+    entity — rare. `asset_id` overrides the auto-assigned assetId."""
     m, err = _find_location(location)
     if err:
         return {"error": err}
@@ -1190,9 +1147,8 @@ def set_warranty(
 
     `expires` is a YYYY-MM-DD date (warranty end), `lifetime` flags a lifetime
     warranty, `details` is a short terms summary (e.g. "limited lifetime,
-    test/measurement instruments excluded"). Only the args you pass are
-    changed; everything else on the item (price, tags, custom fields, photos)
-    is preserved via a full-body PUT (the 0.26 PUT-clears gotcha)."""
+    test/measurement instruments excluded"). Only the args you pass change;
+    other fields are preserved."""
     full, err = _resolve_exact(identifier)
     if err:
         return {"error": err}
@@ -1224,8 +1180,7 @@ def set_fields(identifier: str, fields: dict) -> dict:
     `fields` maps custom-field name -> value; each value's JSON type picks the
     field type (string -> text, number -> number [integer-coerced — the API
     500s on float number values], true/false -> boolean). Upsert semantics:
-    named fields are created or overwritten, others untouched. Everything else
-    on the item is preserved via a full-body PUT (the 0.26 PUT-clears gotcha)."""
+    named fields are created or overwritten; other fields are preserved."""
     full, err = _resolve_exact(identifier)
     if err:
         return {"error": err}
@@ -1254,10 +1209,9 @@ def set_identity(
     """Set manufacturer/model/serial on an existing item (assetId / alias
     field / exact name).
 
-    Only the args you pass are changed; everything else on the item (price,
-    tags, custom fields, photos, warranty) is preserved via a full-body PUT
-    (the 0.26 PUT-clears gotcha). Use when a nameplate/label photo reveals a
-    serial number or a model-number correction after the item was created."""
+    Only the args you pass change; other fields are preserved. Use when a
+    nameplate/label photo reveals a serial number or a model-number
+    correction after the item was created."""
     full, err = _resolve_exact(identifier)
     if err:
         return {"error": err}
@@ -1386,8 +1340,8 @@ def mark_sold(
     """Record that an item was sold (assetId / alias field / exact name):
     price, buyer, YYYY-MM-DD date, notes — only the args you pass are set.
     `clear=True` instead erases all four sold fields (un-sells the item).
-    Everything else on the item is preserved via a full-body PUT. Pair with
-    set_item(archived=True) if the item should also leave active inventory."""
+    Other fields are preserved. Pair with set_item(archived=True) if the item
+    should also leave active inventory."""
     full, err = _resolve_exact(identifier)
     if err:
         return {"error": err}
@@ -1469,7 +1423,11 @@ def _ensure_tag_ids(names: list[str]) -> list[str]:
 
 @mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
-def set_tags(identifier: str, tags: list[str], mode: str = "add") -> dict:
+def set_tags(
+    identifier: str,
+    tags: list[str],
+    mode: Literal["add", "remove", "replace"] = "add",
+) -> dict:
     """Add, remove, or replace tags on an existing item (assetId / alias
     field / exact name).
 
@@ -1678,7 +1636,7 @@ def _label_dir(out_dir: Optional[str]) -> Path:
 @_tool_errors
 def generate_label(
     identifier: str,
-    kind: str = "location",
+    kind: Literal["location", "item", "asset"] = "location",
     out_dir: Optional[str] = None,
 ) -> dict:
     """Save a printable Homebox label PNG (QR + readable name) for a location
@@ -1730,7 +1688,8 @@ def field_index(field_name: Optional[str] = None) -> dict:
     custom field — a one-pass index for DEDUPE before a bulk import (q does
     not index custom fields, so this scans every entity). `field_name`
     defaults to $HOMEBOX_ALIAS_FIELD. assetId may be empty for un-asset'd
-    rows."""
+    rows. Deliberately uncapped: a truncated dedupe index causes duplicates,
+    so expect a large result on a large inventory."""
     fname = (field_name or HOMEBOX_ALIAS_FIELD or "").strip()
     if not fname:
         raise ToolError("pass field_name (no HOMEBOX_ALIAS_FIELD is configured)")
@@ -1746,18 +1705,14 @@ def field_index(field_name: Optional[str] = None) -> dict:
 
 @mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
-def set_primary_photos() -> dict:
-    """Ensure every entity with photos has a primary image set (finalize step
-    after a bulk photo attach). Thin wrapper over POST /actions/set-primary-photos."""
-    return {"ok": True, "result": _post("/actions/set-primary-photos", {})}
-
-
-@mcp.tool(annotations=_IDEMPOTENT)
-@_tool_errors
-def create_thumbnails() -> dict:
-    """Generate any missing photo thumbnails (finalize step after a bulk photo
-    attach). Thin wrapper over POST /actions/create-missing-thumbnails."""
-    return {"ok": True, "result": _post("/actions/create-missing-thumbnails", {})}
+def finalize_photos() -> dict:
+    """Finalize after a bulk photo attach: ensure every entity with photos has
+    a primary image, then generate any missing thumbnails. (Wraps the
+    set-primary-photos and create-missing-thumbnails actions, which are always
+    run as a pair.)"""
+    primary = _post("/actions/set-primary-photos", {})
+    thumbs = _post("/actions/create-missing-thumbnails", {})
+    return {"ok": True, "primary_photos": primary, "thumbnails": thumbs}
 
 
 @mcp.tool(annotations=_READONLY)
@@ -1788,7 +1743,7 @@ def _maintenance_summary(e: dict) -> dict:
         if e.get(k):
             out["item"] = e.get("itemName") or e.get("entityName") or e.get(k)
             break
-    return out
+    return _compact(out)
 
 
 def _find_maintenance_entry(entry_id: str) -> Optional[dict]:
@@ -1835,7 +1790,7 @@ def log_maintenance(
 @_tool_errors
 def list_maintenance(
     identifier: Optional[str] = None,
-    status: str = "both",
+    status: Literal["scheduled", "completed", "both"] = "both",
 ) -> list[dict]:
     """List maintenance entries — for one item (assetId / alias field / name)
     or, with no identifier, across the whole inventory ("what maintenance is
@@ -1906,7 +1861,7 @@ def delete_maintenance(entry_id: str, confirm: str) -> dict:
 @mcp.tool(annotations=_READONLY)
 @_tool_errors
 def inventory_stats(
-    by: str = "totals",
+    by: Literal["totals", "locations", "tags", "purchase-price"] = "totals",
     start: Optional[str] = None,
     end: Optional[str] = None,
 ) -> Any:
@@ -1947,13 +1902,17 @@ def export_csv(save_to: Optional[str] = None) -> dict:
 
 @mcp.tool(annotations=_READONLY)
 @_tool_errors
-def list_custom_fields(field: Optional[str] = None) -> Any:
+def list_custom_fields(field: Optional[str] = None, limit: int = 200) -> Any:
     """Discover the custom-field schema actually in use: with no arg, all
-    custom-field NAMES across the inventory; with `field`, every distinct
-    VALUE of that field. Useful before set_fields/field_index on an unfamiliar
-    instance."""
+    custom-field NAMES across the inventory; with `field`, the distinct
+    VALUES of that field ({"total", "values"}, capped at `limit`). Useful
+    before set_fields/field_index on an unfamiliar instance."""
     if field:
-        return _get("/entities/fields/values", field=field) or []
+        values = _get("/entities/fields/values", field=field) or []
+        out: dict = {"total": len(values), "values": values[:limit]}
+        if len(values) > limit:
+            out["truncated"] = True
+        return out
     return _get("/entities/fields") or []
 
 

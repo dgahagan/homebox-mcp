@@ -92,7 +92,17 @@ def test_list_custom_fields_values(router, good_status):
     )
     result = hb.list_custom_fields(field="color")
     assert route.calls.last.request.url.params["field"] == "color"
-    assert result == ["red", "blue"]
+    assert result == {"total": 2, "values": ["red", "blue"]}
+
+
+def test_list_custom_fields_values_truncated(router, good_status):
+    router.get("/entities/fields/values").mock(
+        return_value=httpx.Response(200, json=[f"v{i}" for i in range(10)])
+    )
+    result = hb.list_custom_fields(field="color", limit=3)
+    assert result["total"] == 10
+    assert result["values"] == ["v0", "v1", "v2"]
+    assert result["truncated"] is True
 
 
 # --- mark_sold -------------------------------------------------------------

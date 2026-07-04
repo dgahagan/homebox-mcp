@@ -106,7 +106,7 @@ clone workflow):
 
 ## Tools
 
-~42 tools. Reads accept a **fuzzy** identifier (assetId, alias field, exact
+~39 tools. Reads accept a **fuzzy** identifier (assetId, alias field, exact
 name, then first keyword match). Write tools require an **exact** identifier
 (assetId, alias field, or exact name) — a typo or an ambiguous match is refused
 rather than mutating the wrong item. Locations are referenced by name or
@@ -149,7 +149,6 @@ touch (a full-body PUT that echoes the rest of the item back — see
 | `set_tags(identifier, tags, mode="add")` | Add / remove / replace tags on an item; unknown tag names are auto-created (partial PATCH). |
 | `set_tag(name, new_name?, description?, color?, icon?, parent?, clear_parent=False)` | Edit **a tag's own** metadata (rename, color, icon, parent tag for grouping) — not what's tagged on an item. Creates the tag if new. |
 | `set_location(location, new_name?, parent?, clear_parent?, description?, notes?, tags?, tags_mode?, entity_type?, asset_id?, fields?)` | General location editor: rename, move (or `clear_parent` to root), tags, notes, entity type, assetId, custom fields. |
-| `set_location_manifest(location, description)` | Set a location's contents-manifest `description` (echoes name/parent/assetId so the PUT doesn't wipe them). |
 | `mark_sold(identifier, sold_price?, sold_to?, sold_date?, sold_notes?, clear=False)` | Record a sale (price/buyer/date/notes) or `clear=True` to un-sell; pair with `set_item(archived=True)` to retire the item. |
 
 ### Maintenance log
@@ -173,8 +172,7 @@ touch (a full-body PUT that echoes the rest of the item back — see
 
 | Tool | Purpose |
 |------|---------|
-| `attach_document(identifier, source, title, doc_type="manual", primary=False)` | Attach a file (local **path or http(s) URL**) to an item, or to a location by name as a fallback. `doc_type` e.g. manual/receipt/warranty/photo. |
-| `attach_location_photo(location, source, title?, primary=True)` | Attach a photo to a **location** as its primary "this is the spot" image for wayfinding. |
+| `attach_document(identifier, source, title, doc_type="manual", primary=False)` | Attach a file (local **path or http(s) URL**) to an item, or to a location by name as a fallback. `doc_type` e.g. manual/receipt/warranty/photo; `primary=True` makes a photo the entity's primary image (e.g. a location's "this is the spot" wayfinding shot). |
 | `list_attachments(identifier)` | List an item's or location's attachments **with their ids** (the handle the other attachment tools need). |
 | `get_attachment(identifier, attachment_id, save_to)` | Download one attachment to a local path so its content (e.g. a manual) can be read. |
 | `rename_attachment(identifier, attachment_id, title?, doc_type?, primary?)` | Update an attachment's title, type, or primary flag. |
@@ -201,8 +199,7 @@ the MCP `destructiveHint` annotation, so clients prompt before running them.
 |------|---------|
 | `generate_label(identifier, kind="location", out_dir?)` | Save a printable label **PNG** (QR + readable name) for a `location`, `item`, or `asset`. Saves to `$HOMEBOX_LABEL_DIR` (else CWD). |
 | `qrcode(data, out_dir?)` | Save a raw QR **JPEG** for arbitrary data (prefer `generate_label` for totes — it adds the name). |
-| `set_primary_photos()` | Ensure every entity with photos has a primary image (finalize after a bulk photo attach). |
-| `create_thumbnails()` | Generate any missing photo thumbnails (finalize after a bulk photo attach). |
+| `finalize_photos()` | Finalize after a bulk photo attach: set missing primary images, then generate missing thumbnails. |
 | `field_index(field_name?)` | `{field_value: assetId}` index over a custom field (default `$HOMEBOX_ALIAS_FIELD`) — a one-pass **dedupe** index before a bulk import, since `q` doesn't index custom fields. |
 
 ## How it works (and Homebox 0.26 gotchas)

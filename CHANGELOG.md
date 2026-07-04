@@ -6,6 +6,23 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (BREAKING) — context/tool-surface optimization (see docs/DECISIONS.md)
+- Removed `set_location_manifest` (use `set_location(description=…)`) and
+  `attach_location_photo` (use `attach_document(…, doc_type="photo",
+  primary=True)` with a location name).
+- Merged `set_primary_photos` + `create_thumbnails` into `finalize_photos()`.
+- `list_custom_fields(field=…)` now returns `{total, values}` capped by
+  `limit` (default 200) with a `truncated` marker.
+
+### Changed
+- Choice params (`mode`, `tags_mode`, `status`, `by`, `kind`) are typed as
+  enums in the tool schemas — invalid values are rejected before the call.
+- Responses omit null fields (a sparse `get_item` drops from 17 keys to 4);
+  `location_contents(recursive=True)` caps at `max_items` (default 500) with
+  an explicit truncation marker.
+- Tool descriptions deduplicated (~10% smaller schema surface for
+  eager-loading MCP clients: 42 tools/~8.3k tokens → 39 tools/~7.5k).
+
 ### Added
 - Maintenance log: `log_maintenance`, `list_maintenance` (per-item or
   inventory-wide, scheduled/completed/both), `set_maintenance` (e.g. mark a
