@@ -6,12 +6,12 @@
     "url": "https://github.com/dgahagan/homebox-mcp",
     "source": "github"
   },
-  "version": "0.9.1",
+  "version": "1.0.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "homebox-mcp",
-      "version": "0.9.1",
+      "version": "1.0.0",
       "transport": {
         "type": "stdio"
       },

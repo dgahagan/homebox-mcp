@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] - 2026-07-05
 
 ### Changed (BREAKING) — context/tool-surface optimization (see docs/DECISIONS.md)
 - Removed `set_location_manifest` (use `set_location(description=…)`) and
@@ -116,3 +116,7 @@ versioning: [SemVer](https://semver.org/).
 ### Changed
 - Default branch renamed `master` → `main`.
 - `.env.example` documents all supported environment variables.
+
+[1.0.0]: https://github.com/dgahagan/homebox-mcp/compare/v0.9.1...v1.0.0
+[0.9.1]: https://github.com/dgahagan/homebox-mcp/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/dgahagan/homebox-mcp/releases/tag/v0.9.0
