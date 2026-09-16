@@ -6,6 +6,45 @@ v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
 
 ---
 
+## 2026-09-15 — Pin `mcp<2` rather than migrate (1.0.1)
+
+### What broke
+
+Issue [#1](https://github.com/dgahagan/homebox-mcp/issues/1): `uvx
+homebox-mcp` crashed for every new user. 1.0.0 shipped `mcp>=1.10` with no
+upper bound, `mcp` 2.0.0 landed after that release, and 2.x removed
+`mcp.server.fastmcp` — FastMCP is now `mcp.server.mcpserver.MCPServer`.
+`homebox_mcp.py` imports `FastMCP` and `ToolError` from the old path, so the
+process died at import, before any Homebox request. Clients just reported the
+server as unavailable, which made it look like a config or auth problem.
+
+### The decision
+
+Ship the one-line pin as a patch release, not a 2.x migration.
+
+- The break is total and affects every fresh install, so time-to-fix
+  dominates. A pin is verifiable in minutes; a migration is not.
+- The 2.x API changed more than the class name (tool registration, error
+  types, context handling), so migrating touches all 39 tools and the test
+  suite — that is a feature release with its own review, not a hotfix.
+- `mcp` 1.x still works and is still resolvable, so the pin costs users
+  nothing today beyond a slightly older transitive dependency.
+
+### Why an upper bound is now permanent policy here
+
+An unbounded major-version range on the one dependency that defines the
+server's entire API surface is a latent break that fires on *someone else's*
+release schedule, with no signal on our side. Every place the dependency set
+appears — `pyproject.toml` and the PEP 723 headers in both `homebox_mcp.py`
+and `server.py` — carries the bound, and all three must move together.
+
+### Follow-up
+
+Migration to the mcp 2.x API is tracked as its own issue. When it lands, the
+bound moves to `>=2,<3` rather than being removed.
+
+---
+
 ## 2026-07-04 — Context & tool-surface optimization (pre-1.0.0)
 
 ### Why now

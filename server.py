@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mcp>=1.10", "httpx>=0.27", "pillow>=10", "pillow-heif>=0.16"]
+# dependencies = ["mcp>=1.10,<2", "httpx>=0.27", "pillow>=10", "pillow-heif>=0.16"]
 # ///
 """Compatibility shim — the server module is homebox_mcp.py.
 

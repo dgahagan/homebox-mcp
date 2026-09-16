@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mcp>=1.10", "httpx>=0.27", "pillow>=10", "pillow-heif>=0.16"]
+# dependencies = ["mcp>=1.10,<2", "httpx>=0.27", "pillow>=10", "pillow-heif>=0.16"]
 # ///
 """Homebox MCP server.
 
@@ -33,7 +33,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 # ---------------------------------------------------------------------------

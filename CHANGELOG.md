@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
+## [1.0.1] - 2026-09-15
+
+### Fixed
+- Pin `mcp>=1.10,<2`. The 1.0.0 release left the dependency unbounded, so
+  `uvx homebox-mcp` resolved `mcp` 2.x, where `mcp.server.fastmcp` no longer
+  exists (FastMCP was renamed `MCPServer`). The server died at import with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'` before reaching
+  the Homebox API, and MCP clients reported it as unavailable
+  ([#1](https://github.com/dgahagan/homebox-mcp/issues/1)). Migration to the
+  mcp 2.x API is tracked separately.
+
+### Security
+- Bump `cryptography` 49.0.0 → 50.0.1 in `uv.lock` (GHSA-g6cj-pr64-35w5, a
+  Bleichenbacher oracle in PKCS#7 `EnvelopedData` decryption). Development and
+  CI only — `cryptography` is a transitive dependency via `mcp` → `pyjwt`, the
+  lockfile is not used by `uvx`/`pip` installs, and no code path here decrypts
+  PKCS#7.
+
 ## [1.0.0] - 2026-07-05
 
 ### Changed (BREAKING) — context/tool-surface optimization (see docs/DECISIONS.md)
