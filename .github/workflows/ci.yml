@@ -12,6 +12,12 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.13"]
+        # Pin the mcp minor explicitly. An unbounded range is what broke
+        # 1.0.0 (issue #1): mcp 2.x removed mcp.server.fastmcp and every
+        # fresh install crashed at import with nothing in CI to catch it.
+        # "lowest" guards the declared floor; "latest" surfaces the next
+        # major early, as a CI failure instead of a user bug report.
+        mcp-version: ["lowest", "latest"]
     steps:
       - uses: actions/checkout@v4
 
@@ -20,11 +26,32 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Resolve mcp constraint
+        id: mcp
+        run: |
+          if [ "${{ matrix.mcp-version }}" = "lowest" ]; then
+            echo "spec=mcp==2.0.0" >> "$GITHUB_OUTPUT"
+          else
+            echo "spec=mcp<3" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run tests
         # --with . installs the package (and its deps: mcp, httpx, pillow,
         # pillow-heif) so nothing is mocked away; --with pytest/respx add the
-        # test-only tooling.
-        run: uv run --with pytest --with respx --with . pytest -q
+        # test-only tooling. The explicit mcp spec comes last so it wins over
+        # the range the package declares.
+        run: |
+          uv run --with pytest --with respx --with . \
+                 --with '${{ steps.mcp.outputs.spec }}' pytest -q
+
+      - name: Assert the tested mcp matches the matrix
+        run: |
+          uv run --with . --with '${{ steps.mcp.outputs.spec }}' python -c "
+          from importlib.metadata import version
+          v = version('mcp')
+          print('mcp under test:', v)
+          assert v.startswith('2.'), f'expected mcp 2.x, got {v}'
+          "
 
   lint:
     runs-on: ubuntu-latest
@@ -35,4 +62,5 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Ruff
-        run: uvx ruff check .
+        # Pinned: see the [tool.ruff.lint] note in pyproject.toml.
+        run: uvx ruff@0.16.7 check .

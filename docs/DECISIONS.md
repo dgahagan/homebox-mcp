@@ -6,6 +6,68 @@ v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
 
 ---
 
+## 2026-09-15 — Migrate to mcp 2.x, require it outright (1.1.0)
+
+Closes the follow-up opened by the 1.0.1 pin below.
+
+### What the migration actually cost
+
+Three lines in `homebox_mcp.py`: the `FastMCP` import, the `ToolError` import,
+and the constructor. `ToolAnnotations` never moved. `@mcp.tool(annotations=…)`
+and `mcp.run()` kept their signatures. The rest was test-side renaming, because
+2.x made the pydantic models snake_case: `Tool.inputSchema` → `input_schema`,
+`annotations.destructiveHint` → `destructive_hint`. The camelCase **wire**
+aliases are unchanged, so nothing a client sees moved.
+
+### Measured before deciding, not after
+
+The issue's stated risk was that 2.x might generate different JSON Schema and
+blow the ~7.5k-token tool-surface budget that the 2026-07-04 entry below spent
+real effort on. That was checked rather than assumed: every registered tool was
+dumped by wire alias under mcp 1.x, 2.0.0 and 2.2.0 and diffed.
+
+All three are **byte-for-byte identical** — 39 tools, 32,485 characters, 70
+`anyOf` nodes, 188 `title` keys. The budget did not move, so it did not
+constrain the decision.
+
+### Why require `>=2,<3` instead of supporting both
+
+Supporting both majors would have been cheap in code — every API this server
+touches is compatible, so a five-line `try/except ImportError` shim would have
+done it. It was still rejected.
+
+A compat shim that CI does not exercise on both sides is not compatibility, it
+is an untested branch on the most load-bearing import in the module. Testing
+both sides doubles the matrix to keep working an install path that barely
+exists: `uvx` and `pipx` build isolated environments, so the only person helped
+is someone vendoring this server into an environment already pinned to `mcp<2`.
+That is a narrow enough case to answer with "pin homebox-mcp 1.0.1".
+
+### A behavior change worth keeping
+
+Under 1.x an unhandled exception reached the client with its message intact;
+2.x masks it as `UnexpectedToolError`. Deliberate `ToolError` messages — the
+Homebox status code and response body that `_tool_errors` raises, which the
+2026-07-03 entry calls out as a property worth protecting — still arrive
+verbatim. So the legible errors survive and the accidental disclosures stop.
+
+### Two pins added, same reasoning as #1
+
+`MCPServer` accepts a `version`, so `__version__` is now reported in the
+`initialize` handshake. A user reporting "the server is broken" hands over the
+exact release without being asked.
+
+CI gained an mcp axis (declared floor 2.0.0 and newest allowed) plus an
+assertion on the resolved major, so mcp 3.x lands as a red build rather than a
+user's crash. Ruff got the same treatment for the same reason: the version was
+unpinned and the rule set implicit, so ruff 0.16 widening its defaults turned
+lint red with 111 findings in code nobody had touched. The rule set is now
+explicit in `pyproject.toml` and the version pinned in the workflow. The
+underlying lesson from #1 generalizes past `mcp` — **an unpinned input with an
+implicit contract will eventually change on someone else's schedule.**
+
+---
+
 ## 2026-09-15 — Pin `mcp<2` rather than migrate (1.0.1)
 
 ### What broke

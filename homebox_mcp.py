@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mcp>=1.10,<2", "httpx>=0.27", "pillow>=10", "pillow-heif>=0.16"]
+# dependencies = ["mcp>=2,<3", "httpx>=0.27", "pillow>=10", "pillow-heif>=0.16"]
 # ///
 """Homebox MCP server.
 
@@ -22,18 +22,18 @@ from __future__ import annotations
 
 import datetime
 import functools
+import mimetypes
 import os
 import sys
-import mimetypes
 from pathlib import Path
 from typing import Any, Literal, Optional
 
 import httpx
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -77,12 +77,14 @@ _client = httpx.Client(
     timeout=30.0,
 )
 
-mcp = FastMCP("homebox")
+# version is surfaced to clients in the initialize handshake — it turns a
+# "the server is broken" bug report into one naming the exact release.
+mcp = MCPServer("homebox", version=__version__)
 
 # Client hints: reads can run without prompting; deletes should prompt hard.
-_READONLY = ToolAnnotations(readOnlyHint=True)
-_IDEMPOTENT = ToolAnnotations(idempotentHint=True)
-_DESTRUCTIVE = ToolAnnotations(destructiveHint=True)
+_READONLY = ToolAnnotations(read_only_hint=True)
+_IDEMPOTENT = ToolAnnotations(idempotent_hint=True)
+_DESTRUCTIVE = ToolAnnotations(destructive_hint=True)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +212,7 @@ def _heic_to_jpeg(filename: str, content: bytes, ctype: str) -> tuple[str, bytes
             or "heic" in ctype.lower() or "heif" in ctype.lower()):
         return filename, content, ctype
     import io
+
     import pillow_heif
     from PIL import Image
     pillow_heif.register_heif_opener()
@@ -280,7 +283,7 @@ def _make_field(name: str, value: Any, type: str = "text") -> dict:
     entry: dict = {"name": name, "type": type}
     if type == "number":
         # Homebox's number custom field is integer-typed: a float JSON value
-        # (e.g. 17000.0, which FastMCP produces from a float-typed arg) makes the
+        # (e.g. 17000.0, which MCPServer produces from a float-typed arg) makes the
         # API 500 with "Unknown Error". Coerce to int.
         entry["numberValue"] = int(value) if isinstance(value, float) else value
     elif type == "boolean":

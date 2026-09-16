@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 dependencies = [
-    "mcp>=1.10,<2",
+    "mcp>=2,<3",
     "httpx>=0.27",
     "pillow>=10",
     "pillow-heif>=0.16",
@@ -46,6 +46,15 @@ only-include = ["homebox_mcp.py"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+# Select the rule set explicitly. Leaving it implicit means the project lints
+# against whatever ruff's defaults happen to be on the day CI runs — ruff
+# 0.16 widened them and turned 111 findings up in code that had not changed,
+# which is the same class of break as the unpinned `mcp` range in issue #1.
+# The CI job pins the ruff version too, so a rule-set change arrives as a
+# deliberate bump rather than a surprise red build.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 
 def test_old_version_blocks_every_tool(router, mock_status):

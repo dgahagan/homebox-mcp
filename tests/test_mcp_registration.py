@@ -1,4 +1,4 @@
-"""FastMCP smoke test: tools are registered with the right schemas + hints."""
+"""MCPServer smoke test: tools are registered with the right schemas + hints."""
 from __future__ import annotations
 
 import asyncio
@@ -18,15 +18,15 @@ def test_many_tools_registered():
 
 def test_search_items_schema_properties():
     _, by_name = _tools_by_name()
-    props = by_name["search_items"].inputSchema.get("properties", {})
+    props = by_name["search_items"].input_schema.get("properties", {})
     assert set(props) == {"query", "tags", "limit"}
 
 
 def test_delete_item_is_destructive():
     _, by_name = _tools_by_name()
-    assert by_name["delete_item"].annotations.destructiveHint is True
+    assert by_name["delete_item"].annotations.destructive_hint is True
 
 
 def test_get_item_is_read_only():
     _, by_name = _tools_by_name()
-    assert by_name["get_item"].annotations.readOnlyHint is True
+    assert by_name["get_item"].annotations.read_only_hint is True

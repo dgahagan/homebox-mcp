@@ -4,6 +4,36 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
+## [1.1.0] - 2026-09-15
+
+### Changed (BREAKING for environments pinned to mcp 1.x)
+- Migrated to the **mcp 2.x SDK**; the requirement is now `mcp>=2,<3`
+  ([#2](https://github.com/dgahagan/homebox-mcp/issues/2)). `FastMCP` became
+  `MCPServer` (`mcp.server.mcpserver`) and `ToolError` moved to
+  `mcp.server.mcpserver.exceptions`. `uvx`/`pipx` installs are isolated and
+  need no action; only an environment already pinned to `mcp<2` is affected.
+- **No client-visible change to the tool surface.** All 39 tools emit
+  byte-identical wire schemas under mcp 1.x, 2.0.0 and 2.2.0 — same tool
+  count, same descriptions, same `inputSchema`/`outputSchema`, same
+  annotations. The ~7.5k-token schema budget from 1.0.0 is unchanged.
+
+### Added
+- The server now reports its version in the MCP `initialize` handshake
+  (`homebox 1.1.0`), so a client can name the exact release in a bug report.
+- CI runs the suite against both the declared mcp floor (2.0.0) and the
+  newest allowed release, and asserts the resolved major — a future mcp 3.x
+  shows up as a red build instead of a user's broken install.
+
+### Fixed
+- Unexpected exceptions no longer leak their message to MCP clients. Under
+  mcp 1.x an unhandled error was surfaced verbatim; 2.x masks it as
+  `UnexpectedToolError`. Deliberate `ToolError` messages — the Homebox status
+  code and response body raised by `_tool_errors` — still reach the client
+  unchanged.
+- `ruff` is pinned in CI and the lint rule set is now declared explicitly in
+  `pyproject.toml`. Lint had gone red with 111 findings in unchanged code
+  after ruff 0.16 widened its defaults.
+
 ## [1.0.1] - 2026-09-15
 
 ### Fixed

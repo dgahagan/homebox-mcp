@@ -91,6 +91,9 @@ gitignored `.env`.
 - **An API key** — Homebox **Profile → API Keys** (the token starts with `hb_`).
 - **[`uv`](https://docs.astral.sh/uv/)**, or any **Python ≥ 3.10** environment
   where you install `homebox-mcp` yourself.
+- **MCP SDK 2.x** (`mcp>=2,<3`), pulled in automatically. `uvx`/`pipx` build an
+  isolated environment, so this needs no action. If you are installing into an
+  environment already pinned to `mcp<2`, stay on `homebox-mcp==1.0.1`.
 
 ## Configuration
 
@@ -233,7 +236,7 @@ exposes. These are hard-won behaviors of the 0.26 entities API:
   path-like, so "front 3/4 view" silently stores as "4 view". The server
   sanitizes `/`→`-` in attach titles.
 - **Number custom fields are integer-typed.** A float `numberValue` (e.g.
-  `17000.0`, which FastMCP produces from a `float`-typed arg) makes the API
+  `17000.0`, which the MCP SDK produces from a `float`-typed arg) makes the API
   **500 "Unknown Error"**. The server coerces number values to `int`; pass whole
   numbers.
 - **Custom-field values are type-keyed** (`textValue` / `numberValue` /
