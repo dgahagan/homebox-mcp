@@ -11,14 +11,17 @@ jobs:
     permissions:
       # Trusted publishing (OIDC) — no API token/secret needed.
       id-token: write
+    # Actions here are pinned by commit SHA, not tag. This job can publish to
+    # PyPI, and a tag can be moved to new code by whoever controls the action.
+    # Dependabot proposes pin updates; they are never auto-merged.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
 
       - name: Build
         run: uv build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

@@ -12,7 +12,12 @@ permissions:
 
 jobs:
   automerge:
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    # Check the PR author, not github.actor: actor is whoever caused the latest
+    # event, which is not always the bot. The same-repo check is defence in
+    # depth, since pull_request_target also fires for fork PRs.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Dependabot metadata
@@ -21,14 +26,17 @@ jobs:
         # github-actions ecosystem keeps the pin current.
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
 
-      - name: Enable auto-merge for patch and minor updates
+      - name: Enable auto-merge for uv patch and minor updates
+        # uv only: GitHub Actions bumps also land in publish.yml, which can
+        # publish to PyPI, so they always get human review.
         # Allowlist, not "!= major": an unclassified update (empty
         # update-type) waits for a human instead of merging.
         # --auto only arms the merge. The main ruleset holds it until the
         # five CI checks pass. Majors get no action and wait for review.
         if: >-
-          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
-          steps.meta.outputs.update-type == 'version-update:semver-minor'
+          steps.meta.outputs.package-ecosystem == 'uv' &&
+          (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+           steps.meta.outputs.update-type == 'version-update:semver-minor')
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

@@ -19,8 +19,8 @@ kind of change.
 ### What changed
 
 - `.github/workflows/dependabot-auto-merge.yml` arms GitHub's native
-  auto-merge on Dependabot PRs whose `update-type` is semver patch or minor.
-  It does not merge anything itself.
+  auto-merge on Dependabot `uv` PRs whose `update-type` is semver patch or
+  minor. It does not merge anything itself.
 - A repository ruleset on `main` requires the five CI checks (`lint` and the
   four `test (...)` jobs). That is what holds an armed PR until CI passes.
   Without it, `--auto` has nothing to wait for and merges at once.
@@ -28,11 +28,24 @@ kind of change.
   `github-actions`, with patch and minor grouped into one PR per ecosystem.
   Before this, only security updates existed, so updates arrived only after
   an alert had already fired.
+- `publish.yml` actions are pinned by commit SHA instead of tag.
 
 ### Choices worth knowing
 
 **Majors are never auto-merged.** The mcp 1.x → 2.x break (#1, #2) is the
 reason: a major bump can need real work, not a click.
+
+**GitHub Actions bumps are never auto-merged, only `uv`.** The same actions
+run in `publish.yml`, which holds `id-token: write`: the PyPI trusted-publishing
+credential. A compromised action release that auto-merged would run with the
+power to publish homebox-mcp at the next tag. That is a path to users, so it
+gets a human. The `tj-actions/changed-files` compromise (March 2025) is the
+pattern: a trusted action's tags were moved to malicious code.
+
+**`publish.yml` actions are pinned by SHA.** A tag is mutable, so `@v4` runs
+whatever its owner points it at, with or without Dependabot. A SHA cannot
+move. Dependabot proposes the pin updates, and per the rule above they are
+reviewed by hand. `ci.yml` stays tag-pinned: its jobs hold only a read token.
 
 **Allowlist, not "anything but major".** `fetch-metadata` can return an empty
 `update-type`. An allowlist makes that case wait for a human instead of
@@ -43,6 +56,9 @@ merging.
 `pull_request_target` runs with a write token in the base-repo context. That
 is only safe because the job never checks out or runs PR code. The workflow
 comment says so, so a later edit does not add a checkout step by accident.
+The job checks the PR author (`pull_request.user.login`), not `github.actor`,
+which is whoever caused the latest event. It also requires the PR head to be
+in this repo, since `pull_request_target` fires for fork PRs too.
 
 **`fetch-metadata` is pinned by SHA**, unlike the tag-pinned actions in
 `ci.yml`, because this job holds a write token. The `github-actions` ecosystem
@@ -59,10 +75,11 @@ maintainer.
 
 ### Accepted risk
 
-A malicious patch release that survives the cooldown and passes CI would
-merge on its own. The blast radius is CI and the dev environment, not users:
-`publish.yml` runs only on `v*` tags, and `uv.lock` is not in the published
-wheel. A release still needs a human to tag it.
+A malicious Python patch release that survives the cooldown and passes CI
+would merge on its own. The blast radius is CI and the dev environment, not
+users: `uv.lock` is not in the published wheel, and `publish.yml` runs only on
+`v*` tags, with SHA-pinned actions that only change after review. A release
+still needs a human to tag it.
 
 ### Side effect
 
