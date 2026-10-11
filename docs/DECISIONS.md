@@ -6,6 +6,72 @@ v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
 
 ---
 
+## 2026-10-11 — Auto-merge Dependabot patch and minor updates
+
+### Why
+
+Two Dependabot security PRs (#3 anyio, #4 pyjwt) sat open for 23 and 9 days
+with 16 alerts behind them, two of them critical. Both changed only `uv.lock`
+and both had green CI the whole time. The review they waited for added nothing
+the CI run had not already checked. A human queue is the wrong gate for that
+kind of change.
+
+### What changed
+
+- `.github/workflows/dependabot-auto-merge.yml` arms GitHub's native
+  auto-merge on Dependabot PRs whose `update-type` is semver patch or minor.
+  It does not merge anything itself.
+- A repository ruleset on `main` requires the five CI checks (`lint` and the
+  four `test (...)` jobs). That is what holds an armed PR until CI passes.
+  Without it, `--auto` has nothing to wait for and merges at once.
+- `.github/dependabot.yml` adds weekly version updates for `uv` and
+  `github-actions`, with patch and minor grouped into one PR per ecosystem.
+  Before this, only security updates existed, so updates arrived only after
+  an alert had already fired.
+
+### Choices worth knowing
+
+**Majors are never auto-merged.** The mcp 1.x → 2.x break (#1, #2) is the
+reason: a major bump can need real work, not a click.
+
+**Allowlist, not "anything but major".** `fetch-metadata` can return an empty
+`update-type`. An allowlist makes that case wait for a human instead of
+merging.
+
+**`pull_request_target`, not `pull_request`.** Dependabot-triggered
+`pull_request` runs get a read-only token, which cannot enable auto-merge.
+`pull_request_target` runs with a write token in the base-repo context. That
+is only safe because the job never checks out or runs PR code. The workflow
+comment says so, so a later edit does not add a checkout step by accident.
+
+**`fetch-metadata` is pinned by SHA**, unlike the tag-pinned actions in
+`ci.yml`, because this job holds a write token. The `github-actions` ecosystem
+keeps the pin current.
+
+**A 3-day cooldown on version updates.** A new release must age three days
+before Dependabot proposes it. Compromised or broken releases are usually
+yanked within that window. Security updates ignore the cooldown, which is the
+right way round.
+
+**The ruleset has an admin bypass.** Direct pushes to `main` are the normal
+workflow here and stay possible. The required checks gate PRs, not the
+maintainer.
+
+### Accepted risk
+
+A malicious patch release that survives the cooldown and passes CI would
+merge on its own. The blast radius is CI and the dev environment, not users:
+`publish.yml` runs only on `v*` tags, and `uv.lock` is not in the published
+wheel. A release still needs a human to tag it.
+
+### Side effect
+
+A merge done with `GITHUB_TOKEN` does not trigger new workflow runs, so an
+auto-merged PR produces no `push` CI run on `main`. CI already ran on the PR,
+so nothing goes unchecked.
+
+---
+
 ## 2026-09-15 — Migrate to mcp 2.x, require it outright (1.1.0)
 
 Closes the follow-up opened by the 1.0.1 pin below.

@@ -1,0 +1,35 @@
+name: Dependabot auto-merge
+
+# pull_request_target, not pull_request: Dependabot-triggered pull_request runs
+# get a read-only GITHUB_TOKEN, and enabling auto-merge needs write access.
+# pull_request_target is safe here only because no step checks out or runs
+# code from the PR. Keep it that way.
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        # Pinned by SHA: this job holds a write token. Dependabot's
+        # github-actions ecosystem keeps the pin current.
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Enable auto-merge for patch and minor updates
+        # Allowlist, not "!= major": an unclassified update (empty
+        # update-type) waits for a human instead of merging.
+        # --auto only arms the merge. The main ruleset holds it until the
+        # five CI checks pass. Majors get no action and wait for review.
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}
