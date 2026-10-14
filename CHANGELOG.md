@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- `move_item` can move an item **into another item** (e.g. a lens into a
+  camera bag) ([#6](https://github.com/dgahagan/homebox-mcp/issues/6)).
+  Homebox 0.26 lets any entity be a parent, and `location` is now matched
+  against locations and items alike: an item by exact name or assetId,
+  narrowed by a path such as `Office/Camera Bag`. An item that matches by
+  alias field only is not a destination, because that lookup scans the whole
+  inventory on every move.
+- **Behavior change:** a destination name that matches both a location and
+  an item is now refused as ambiguous instead of picking the location. The
+  error lists every match; pass a longer path or the item's assetId. Moving
+  an item into itself or into an item it contains is refused.
+
 ## [1.1.0] - 2026-09-15
 
 ### Changed (BREAKING for environments pinned to mcp 1.x)
