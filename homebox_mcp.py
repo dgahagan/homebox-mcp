@@ -384,13 +384,13 @@ def _asset_lookup(ident: str) -> Optional[dict]:
     return None
 
 
-def _exact_matches(ident: str) -> list[dict]:
+def _exact_matches(ident: str, alias_scan: bool = True) -> list[dict]:
     """All entities whose alias field or name equals `ident` (case-insensitive).
 
     Keyword search first (cheap; matches name/description), then — only if
-    nothing matched and an alias field is configured — a full scan, since `q`
-    does not index custom fields. List responses are lightweight summaries, so
-    full detail is fetched before matching.
+    nothing matched, an alias field is configured, and `alias_scan` — a full
+    scan, since `q` does not index custom fields. List responses are
+    lightweight summaries, so full detail is fetched before matching.
     """
     def hit(full: dict) -> bool:
         if HOMEBOX_ALIAS_FIELD and (
@@ -400,7 +400,7 @@ def _exact_matches(ident: str) -> list[dict]:
 
     candidates = [_get(f"/entities/{e['id']}") for e in _search_all(q=ident)]
     matches = {full["id"]: full for full in candidates if hit(full)}
-    if not matches and HOMEBOX_ALIAS_FIELD:
+    if not matches and HOMEBOX_ALIAS_FIELD and alias_scan:
         for e in _search_all():
             if _is_location(e):
                 continue
@@ -681,6 +681,20 @@ def _walk_tree() -> list[tuple[dict, list[str]]]:
     return out
 
 
+def _path_segments(ref: str) -> list[str]:
+    return [s.strip() for s in ref.split("/") if s.strip()]
+
+
+def _path_matches(path: list[str], want: list[str]) -> bool:
+    """True if `path` ends with the segments `want` (case-insensitive)."""
+    return [s.lower() for s in path[-len(want):]] == [s.lower() for s in want]
+
+
+def _location_hits(want: list[str]) -> list[tuple[dict, list[str]]]:
+    """Every (tree node, path) whose path ends with the segments `want`."""
+    return [(node, path) for node, path in _walk_tree() if _path_matches(path, want)]
+
+
 def _find_location(ref: str) -> tuple[Optional[dict], Optional[str]]:
     """Resolve a location by name or /-separated path (e.g. 'Garage/Shelf 1').
 
@@ -690,13 +704,10 @@ def _find_location(ref: str) -> tuple[Optional[dict], Optional[str]]:
     multiple locations is an error listing each full path (instead of silently
     picking the first) — disambiguate by passing a path.
     """
-    want = [s.strip().lower() for s in ref.split("/") if s.strip()]
+    want = _path_segments(ref)
     if not want:
         return None, "empty location name"
-    hits = []
-    for node, path in _walk_tree():
-        if [s.lower() for s in path[-len(want):]] == want:
-            hits.append((node, path))
+    hits = _location_hits(want)
     if not hits:
         return None, f"no location named '{ref}' (see list_locations)"
     if len(hits) > 1:
@@ -1237,19 +1248,72 @@ def set_identity(
     }
 
 
+def _find_destination(ref: str) -> tuple[Optional[dict], Optional[str]]:
+    """Resolve where to move an item: a location OR a container item (0.26
+    unified entities — any entity can be a parent, e.g. lenses in a camera
+    bag).
+
+    `ref` is a name or /-separated path matched against both kinds alike: a
+    location as in _find_location, an item by exact name (or assetId) whose
+    path ends with the given segments. Items are not matched by alias field —
+    that needs a full-inventory scan on every move to a location. Returns
+    (match, error) — match is {"id", "kind", "path", "ancestor_ids"}
+    (ancestor_ids, root first and including the match itself, is only known
+    for items). More than one match, of either kind, is an error.
+    """
+    want = _path_segments(ref)
+    if not want:
+        return None, "empty destination name"
+    hits: dict[str, dict] = {}
+    for node, path in _location_hits(want):
+        hits[node["id"]] = {"id": node["id"], "kind": "location",
+                            "path": "/".join(path), "ancestor_ids": []}
+    full = _asset_lookup(want[-1])
+    candidates = [full] if full else _exact_matches(want[-1], alias_scan=False)
+    for c in candidates:
+        if c["id"] in hits:
+            continue
+        nodes = _get(f"/entities/{c['id']}/path") or []
+        path = [n.get("name", "") for n in nodes]
+        # an assetId hit stands in for the item's own name in the path
+        if _path_matches(path[:-1] + [want[-1]] if full else path, want):
+            hits[c["id"]] = {"id": c["id"], "kind": "item", "path": "/".join(path),
+                             "assetId": c.get("assetId"),
+                             "ancestor_ids": [n.get("id") for n in nodes]}
+    if not hits:
+        return None, (f"no location or item named '{ref}' "
+                      f"(see list_locations / search_items)")
+    if len(hits) > 1:
+        cands = "; ".join(
+            f"location {h['path']}" if h["kind"] == "location"
+            else f"item {h['path']} (assetId {h.get('assetId') or '?'})"
+            for h in hits.values())
+        return None, (f"'{ref}' is ambiguous — {len(hits)} destinations match: "
+                      f"{cands}. Pass a longer path, or an item's assetId.")
+    return next(iter(hits.values())), None
+
+
 @mcp.tool(annotations=_IDEMPOTENT)
 @_tool_errors
 def move_item(identifier: str, location: str) -> dict:
-    """Move an item to another location (assetId / alias field / exact name).
+    """Move an item into a location or into another item (assetId / alias
+    field / exact name).
 
-    `location` is a location name or /-separated path (see list_locations).
-    Uses a partial PATCH, so nothing else on the item changes."""
+    `location` is the destination's name or /-separated path — a location
+    (see list_locations) or a container item, e.g. a lens into 'Camera Bag'
+    or 'Office/Camera Bag'. An item destination may also be its assetId. A
+    name that matches more than one location or item is refused; pass a
+    longer path or the assetId. Uses a partial PATCH, so nothing else on the
+    item changes."""
     full, err = _resolve_exact(identifier)
     if err:
         return {"error": err}
-    m, lerr = _find_location(location)
+    m, lerr = _find_destination(location)
     if lerr:
         return {"error": lerr}
+    if full["id"] in m["ancestor_ids"]:
+        return {"error": f"can't move '{full.get('name')}' into itself "
+                         f"or an item inside it ({m['path']})"}
     _patch(f"/entities/{full['id']}", {"id": full["id"], "parentId": m["id"]})
     return {"ok": True, "assetId": full.get("assetId"),
             "name": full.get("name"),
