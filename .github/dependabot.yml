@@ -1,0 +1,29 @@
+# Routine version updates. Security updates are separate: they are switched on
+# in repo settings, ignore the schedule and cooldown, and open as soon as an
+# alert fires. Patch and minor updates auto-merge once CI passes (see
+# workflows/dependabot-auto-merge.yml); majors open as their own PRs for review.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    # Let a new release age 3 days before proposing it, so a compromised or
+    # yanked release is likely caught upstream before it can auto-merge.
+    cooldown:
+      default-days: 3
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
