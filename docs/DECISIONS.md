@@ -6,6 +6,43 @@ v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
 
 ---
 
+## 2026-10-21 — SHA-pin every action; checkout v7, setup-uv v10
+
+### Why
+
+Dependabot opened #8 (setup-uv 5→7) and #9 (checkout 4→7). setup-uv was
+already at v10.3.0, but Dependabot stopped at v7. Since v8, setup-uv publishes
+no floating `@v8`-style major tags, as a supply-chain measure after the
+tj-actions compromise. `ci.yml` referenced `@v5`, a floating tag, so v7 was
+the newest version Dependabot could offer in that form.
+
+### What changed
+
+- `ci.yml` now pins actions by commit SHA with a `# vX.Y.Z` comment, the same
+  as `publish.yml`. Every action in the repo is now SHA-pinned.
+- checkout 4.4.0 → 7.0.1 and setup-uv 5.4.2 → 10.3.0 in both workflows. Each
+  SHA was checked against its upstream tag before pinning.
+- This replaces #8 and #9.
+
+### Breaking changes checked
+
+None apply here. checkout: node24 runtime (fine on GitHub-hosted runners),
+credentials stored in a separate file (no step pushes), fork checkouts
+blocked for `pull_request_target`/`workflow_run` (no workflow checks out
+under those events). setup-uv: no auto-activated venv (`uv run --with` needs
+none), `server-url` and the old manifest format removed (not used), cache
+pruning off by default (a little more cache storage), and no automatic cache
+on `release`, `pull_request_target` or `workflow_run` (these workflows run on
+`push` and `pull_request` only).
+
+### Side effect
+
+Dependabot still proposes action updates, now as SHA changes. They never
+auto-merge (auto-merge covers `uv` only), so each one gets a review. The SHA
+pin removes the risk of a moved tag.
+
+---
+
 ## 2026-10-21 — Raise the Python floor to 3.11 for Pillow 13 (v1.2.0)
 
 ### Why
