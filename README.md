@@ -89,7 +89,7 @@ gitignored `.env`.
   (`/items`, `/locations`, `/labels`) and are rejected on the first tool call
   with a clear error rather than failing cryptically.
 - **An API key** — Homebox **Profile → API Keys** (the token starts with `hb_`).
-- **[`uv`](https://docs.astral.sh/uv/)**, or any **Python ≥ 3.10** environment
+- **[`uv`](https://docs.astral.sh/uv/)**, or any **Python ≥ 3.11** environment
   where you install `homebox-mcp` yourself.
 - **MCP SDK 2.x** (`mcp>=2,<3`), pulled in automatically. `uvx`/`pipx` build an
   isolated environment, so this needs no action. If you are installing into an

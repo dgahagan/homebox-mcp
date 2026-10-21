@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
-# dependencies = ["pillow>=10", "httpx>=0.27"]
+# requires-python = ">=3.11"
+# dependencies = ["pillow>=13", "httpx>=0.27"]
 # ///
 """Annotate one wide photo of a shelf bank into one boxed/labeled image per
 shelf — the "this is Shelf 2" wayfinding photos that get uploaded as each
