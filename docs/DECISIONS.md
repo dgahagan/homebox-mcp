@@ -6,6 +6,45 @@ v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
 
 ---
 
+## 2026-10-21 — Raise the Python floor to 3.11 for Pillow 13 (v1.2.0)
+
+### Why
+
+Nine Pillow advisories were open (Dependabot alerts #19–#27), one critical:
+a heap overflow in `ImagingJpegDecode`. All of them are fixed only in Pillow
+13.0.0. Dependabot could not open a fix PR (`security_update_not_possible`,
+latest resolvable 12.3.0). The cause was `requires-python = ">=3.10"`: Pillow
+13 requires Python 3.11, so the resolver had to keep 12.x for 3.10.
+
+The server decodes photos that users supply (`_heic_to_jpeg`). Malformed
+image input is exactly what these advisories cover, so the risk is real here,
+not theoretical.
+
+### What changed
+
+- `requires-python` is `>=3.11` and the minimum Pillow is `>=13`, in all five
+  places that declare them: `pyproject.toml` and the PEP 723 headers in
+  `homebox_mcp.py`, `server.py`, `heic2jpg.py` and
+  `annotate_location_photos.py`.
+- The CI matrix tests 3.11 and 3.13. Ruff targets `py311`.
+- The `main: require CI` ruleset names the required test checks by their
+  Python version, so it was updated from `test (3.10, …)` to
+  `test (3.11, …)`. Without that, every PR waits forever on checks that no
+  longer run.
+
+### Alternatives rejected
+
+- **Keep 3.10 with an environment marker** (`pillow>=13; python_version>="3.11"`)
+  — 3.10 users would still install a vulnerable Pillow, and Python 3.10 is
+  end-of-life this month. It keeps support for a dead interpreter at the cost
+  of shipping known-vulnerable decoding.
+- **Upper-bound Pillow (`<14`)** — not done. A cap on Pillow is what blocks
+  the next security fix. The mcp cap exists because mcp breaks its API across
+  majors. Pillow's API surface used here (`Image.open`, `convert`, `save`) is
+  stable.
+
+---
+
 ## 2026-10-11 — Auto-merge Dependabot patch and minor updates
 
 ### Why

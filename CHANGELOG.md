@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
+## [1.2.0] - 2026-10-21
+
+### Security
+- Requires **Pillow 13** (`pillow>=13`). Pillow 12.x has nine open advisories
+  fixed only in 13.0.0, one critical (heap overflow in `ImagingJpegDecode`).
+  The server decodes user-supplied photos (HEIC conversion), so this is a
+  real attack surface. The companion scripts `heic2jpg.py` and
+  `annotate_location_photos.py` get the same bump.
+
+### Changed (BREAKING for Python 3.10)
+- The minimum Python is now **3.11** (`requires-python = ">=3.11"`). Pillow 13
+  dropped Python 3.10, and Python 3.10 reaches end-of-life in October 2026.
+  On Python 3.10, stay on `homebox-mcp==1.1.0`. `uvx` picks a suitable
+  interpreter itself, so most installs need no action.
+- No change to the tool surface.
+
 ## [1.1.0] - 2026-09-15
 
 ### Changed (BREAKING for environments pinned to mcp 1.x)
@@ -165,6 +181,9 @@ versioning: [SemVer](https://semver.org/).
 - Default branch renamed `master` → `main`.
 - `.env.example` documents all supported environment variables.
 
+[1.2.0]: https://github.com/dgahagan/homebox-mcp/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/dgahagan/homebox-mcp/compare/v1.0.1...v1.1.0
+[1.0.1]: https://github.com/dgahagan/homebox-mcp/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/dgahagan/homebox-mcp/compare/v0.9.1...v1.0.0
 [0.9.1]: https://github.com/dgahagan/homebox-mcp/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dgahagan/homebox-mcp/releases/tag/v0.9.0
