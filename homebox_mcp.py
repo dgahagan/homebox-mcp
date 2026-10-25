@@ -24,6 +24,7 @@ import datetime
 import functools
 import mimetypes
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -304,13 +305,18 @@ def _upsert_field(body: dict, name: str, value: Any, type: str = "text") -> None
     flds.append(new)
 
 
+def _path_nodes(entity_id: str) -> Optional[list[dict]]:
+    """GET /entities/{id}/path — ancestors root first, the entity itself
+    last — or None if the endpoint fails (e.g. a broken parent)."""
+    try:
+        return _get(f"/entities/{entity_id}/path") or []
+    except Exception:
+        return None
+
+
 def _location_path(entity_id: str) -> str:
     """Full 'A → B → C' location path for an entity (excluding itself)."""
-    try:
-        nodes = _get(f"/entities/{entity_id}/path") or []
-    except Exception:
-        return ""
-    names = [n.get("name", "") for n in nodes]
+    names = [n.get("name", "") for n in _path_nodes(entity_id) or []]
     # the path endpoint includes the entity itself last; drop it
     if names:
         names = names[:-1]
@@ -384,13 +390,13 @@ def _asset_lookup(ident: str) -> Optional[dict]:
     return None
 
 
-def _exact_matches(ident: str, alias_scan: bool = True) -> list[dict]:
+def _exact_matches(ident: str) -> list[dict]:
     """All entities whose alias field or name equals `ident` (case-insensitive).
 
     Keyword search first (cheap; matches name/description), then — only if
-    nothing matched, an alias field is configured, and `alias_scan` — a full
-    scan, since `q` does not index custom fields. List responses are
-    lightweight summaries, so full detail is fetched before matching.
+    nothing matched and an alias field is configured — a full scan, since `q`
+    does not index custom fields. List responses are lightweight summaries, so
+    full detail is fetched before matching.
     """
     def hit(full: dict) -> bool:
         if HOMEBOX_ALIAS_FIELD and (
@@ -400,7 +406,7 @@ def _exact_matches(ident: str, alias_scan: bool = True) -> list[dict]:
 
     candidates = [_get(f"/entities/{e['id']}") for e in _search_all(q=ident)]
     matches = {full["id"]: full for full in candidates if hit(full)}
-    if not matches and HOMEBOX_ALIAS_FIELD and alias_scan:
+    if not matches and HOMEBOX_ALIAS_FIELD:
         for e in _search_all():
             if _is_location(e):
                 continue
@@ -710,6 +716,14 @@ def _find_location(ref: str) -> tuple[Optional[dict], Optional[str]]:
     hits = _location_hits(want)
     if not hits:
         return None, f"no location named '{ref}' (see list_locations)"
+    return _pick_location(ref, hits)
+
+
+def _pick_location(
+    ref: str, hits: list[tuple[dict, list[str]]],
+) -> tuple[Optional[dict], Optional[str]]:
+    """The one (match, None) from non-empty `hits`, or (None, error) listing
+    every path when there is more than one."""
     if len(hits) > 1:
         paths = "; ".join("/".join(p) for _, p in hits)
         return None, (f"'{ref}' is ambiguous — {len(hits)} locations match: "
@@ -1248,49 +1262,69 @@ def set_identity(
     }
 
 
+_ASSET_ID_RE = re.compile(r"\d{3}-\d{3,}")
+
+
 def _find_destination(ref: str) -> tuple[Optional[dict], Optional[str]]:
     """Resolve where to move an item: a location OR a container item (0.26
     unified entities — any entity can be a parent, e.g. lenses in a camera
     bag).
 
-    `ref` is a name or /-separated path matched against both kinds alike: a
-    location as in _find_location, an item by exact name (or assetId) whose
-    path ends with the given segments. Items are not matched by alias field —
-    that needs a full-inventory scan on every move to a location. Returns
-    (match, error) — match is {"id", "kind", "path", "ancestor_ids"}
-    (ancestor_ids, root first and including the match itself, is only known
-    for items). More than one match, of either kind, is an error.
+    `ref` is resolved in this order:
+    1. an assetId in the strict '000-012' form → that entity (Homebox would
+       also read a bare '12' as an assetId, so a looser form would hijack
+       numbered bins and shelves);
+    2. a location name or path, exactly as in _find_location — a location
+       match wins over any item with the same name, as before items could be
+       destinations;
+    3. only if no location matches, an item by exact name (never alias field
+       or description) whose path ends with the given segments, e.g.
+       'Office/Camera Bag'. An item whose path can't be read is skipped.
+    Returns (match, error) — match is {"id", "path", "ancestor_ids"}
+    (ancestor_ids, root first and including the match itself, is empty for a
+    location found in the tree). More than one match is an error.
     """
     want = _path_segments(ref)
     if not want:
         return None, "empty destination name"
-    hits: dict[str, dict] = {}
-    for node, path in _location_hits(want):
-        hits[node["id"]] = {"id": node["id"], "kind": "location",
-                            "path": "/".join(path), "ancestor_ids": []}
-    full = _asset_lookup(want[-1])
-    candidates = [full] if full else _exact_matches(want[-1], alias_scan=False)
-    for c in candidates:
-        if c["id"] in hits:
+
+    def entity_hit(full: dict, nodes: list[dict]) -> dict:
+        return {"id": full["id"], "assetId": full.get("assetId"),
+                "path": "/".join(n.get("name", "") for n in nodes),
+                "ancestor_ids": [n.get("id") for n in nodes]}
+
+    if len(want) == 1 and _ASSET_ID_RE.fullmatch(want[0]):
+        full = _asset_lookup(want[0])
+        if full:
+            nodes = _path_nodes(full["id"])
+            if nodes is None:
+                return None, f"couldn't read the path of '{ref}'"
+            return entity_hit(full, nodes), None
+
+    locs = _location_hits(want)
+    if locs:
+        m, err = _pick_location(ref, locs)
+        if err:
+            return None, err
+        return {"id": m["id"], "path": m["path"], "ancestor_ids": []}, None
+
+    hits = []
+    for e in _search_all(q=want[-1]):
+        full = _get(f"/entities/{e['id']}")
+        if (full.get("name") or "").lower() != want[-1].lower():
             continue
-        nodes = _get(f"/entities/{c['id']}/path") or []
-        path = [n.get("name", "") for n in nodes]
-        # an assetId hit stands in for the item's own name in the path
-        if _path_matches(path[:-1] + [want[-1]] if full else path, want):
-            hits[c["id"]] = {"id": c["id"], "kind": "item", "path": "/".join(path),
-                             "assetId": c.get("assetId"),
-                             "ancestor_ids": [n.get("id") for n in nodes]}
+        nodes = _path_nodes(full["id"])
+        if nodes is not None and _path_matches([n.get("name", "") for n in nodes], want):
+            hits.append(entity_hit(full, nodes))
     if not hits:
         return None, (f"no location or item named '{ref}' "
                       f"(see list_locations / search_items)")
     if len(hits) > 1:
-        cands = "; ".join(
-            f"location {h['path']}" if h["kind"] == "location"
-            else f"item {h['path']} (assetId {h.get('assetId') or '?'})"
-            for h in hits.values())
-        return None, (f"'{ref}' is ambiguous — {len(hits)} destinations match: "
-                      f"{cands}. Pass a longer path, or an item's assetId.")
-    return next(iter(hits.values())), None
+        cands = "; ".join(f"{h['path']} (assetId {h['assetId'] or '?'})"
+                          for h in hits)
+        return None, (f"'{ref}' is ambiguous — {len(hits)} items match: "
+                      f"{cands}. Pass a longer path or the assetId.")
+    return hits[0], None
 
 
 @mcp.tool(annotations=_IDEMPOTENT)
@@ -1301,10 +1335,11 @@ def move_item(identifier: str, location: str) -> dict:
 
     `location` is the destination's name or /-separated path — a location
     (see list_locations) or a container item, e.g. a lens into 'Camera Bag'
-    or 'Office/Camera Bag'. An item destination may also be its assetId. A
-    name that matches more than one location or item is refused; pass a
-    longer path or the assetId. Uses a partial PATCH, so nothing else on the
-    item changes."""
+    or 'Office/Camera Bag' — or a container item's assetId ('000-012'). A
+    location wins over an item with the same name; reach the item with a
+    longer path or its assetId. A name that matches more than one location,
+    or more than one item, is refused. Uses a partial PATCH, so nothing else
+    on the item changes."""
     full, err = _resolve_exact(identifier)
     if err:
         return {"error": err}
