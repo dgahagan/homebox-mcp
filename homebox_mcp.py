@@ -760,15 +760,17 @@ def create_item(
 ) -> dict:
     """Create an inventory item and enrich it in one call.
 
-    `location` is a location name or /-separated path (must exist; use
-    list_locations). `tags` are tag names (must already exist; use list_tags).
+    `location` is where the item goes, resolved as in move_item: a location
+    name or /-separated path (must exist; use list_locations), or a container
+    item, e.g. 'Camera Bag', 'Office/Camera Bag' or its assetId ('000-012').
+    A location wins over an item with the same name. `tags` are tag names (must already exist; use list_tags).
     `fields` maps custom-field name -> value; each value's JSON type picks the
     field type (string -> text, number -> number [integer-coerced],
     true/false -> boolean). Returns the new assetId and id.
     """
     parent_id = None
     if location:
-        m, err = _find_location(location)
+        m, err = _find_destination(location)
         if err:
             return {"error": err}
         parent_id = m["id"]
@@ -1272,9 +1274,11 @@ def set_identity(
 
 
 def _find_destination(ref: str) -> tuple[Optional[dict], Optional[str]]:
-    """Resolve where to move an item: a location OR a container item (0.26
-    unified entities — any entity can be a parent, e.g. lenses in a camera
-    bag).
+    """Resolve where to put an item (move_item, create_item): a location OR
+    a container item (0.26 unified entities — any entity can be a parent,
+    e.g. lenses in a camera bag). Not for a location's parent: Homebox drops
+    a location under an item from /entities/tree, so it can't be found by
+    name again (#18).
 
     `ref` is resolved in this order:
     1. an assetId in the strict '000-012' form → that entity (Homebox would

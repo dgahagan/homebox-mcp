@@ -132,7 +132,7 @@ rather than mutating the wrong item. An assetId must be in the full
 
 | Tool | Purpose |
 |------|---------|
-| `create_item(name, location?, quantity=1, manufacturer?, model?, serial?, purchase_price?, purchase_date?, purchase_from?, warranty_expires?, notes?, fields?, tags?)` | Create and enrich an item in one call. `fields` is a dict typed by JSON value (string→text, number→number [integer-coerced], bool→boolean); `tags` must already exist. Returns the new assetId. |
+| `create_item(name, location?, quantity=1, manufacturer?, model?, serial?, purchase_price?, purchase_date?, purchase_from?, warranty_expires?, notes?, fields?, tags?)` | Create and enrich an item in one call. `fields` is a dict typed by JSON value (string→text, number→number [integer-coerced], bool→boolean); `tags` must already exist. `location` resolves as in `move_item`: a location name or path, or a container item (name, path or assetId). Returns the new assetId. |
 | `import_csv(csv_text)` | Bulk-create items and locations from a Homebox CSV in one multipart request. `HB.location` **auto-creates** the path hierarchy; recognizes `HB.name`, `HB.tags`, `HB.quantity`, `HB.serial_number`, `HB.model_number`, `HB.manufacturer`, `HB.notes`, `HB.purchase_*`, `HB.warranty_expires`, `HB.field.<name>`. |
 | `create_location(name, parent?, description?)` | Create a location (tote/bin/shelf) to bootstrap a new storage spot; `description` doubles as a contents manifest. |
 | `barcode_lookup(code)` | UPC/EAN → name/manufacturer/model (optional, for boxed goods). |

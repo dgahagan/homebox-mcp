@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- `create_item(location=…)` can create an item **inside another item**
+  ([#18](https://github.com/dgahagan/homebox-mcp/issues/18)). `location`
+  resolves exactly as `move_item`'s destination does: a strict assetId, then
+  a location by name or path (as before), then an item by exact name or
+  path. `set_location` and `create_location` still accept only a location as
+  the parent: Homebox drops a location placed under an item from the
+  location tree.
+
 ## [1.3.0] - 2026-10-25
 
 ### Changed
