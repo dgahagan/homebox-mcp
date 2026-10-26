@@ -6,6 +6,35 @@ v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
 
 ---
 
+## 2026-10-25 — `move_item` refuses a location (#19)
+
+### Why
+
+`_resolve_exact` resolves an assetId to any entity, including a location.
+`move_item` didn't check the kind, so it could move a location under an
+item. The #18 probe showed that Homebox then drops the location from
+`/entities/tree`.
+
+### What changed
+
+`move_item` returns an error for a location and points to
+`set_location(parent=…)`, as `delete_item` already does.
+
+### Why not guard `_resolve_exact` instead
+
+Some write tools are meant to work on locations. For example,
+`attach_document` adds wayfinding photos to them. Only `move_item` changes a
+parent: `duplicate_item` keeps the original's parent, and no other write tool
+takes one. So the guard sits in the one tool that can do the damage.
+
+### Verified
+
+`test_move_refuses_a_location` fails on the old code. A live run gave
+`move_item` a `ZZ ` location's assetId and an item destination. The move
+was refused, and the location stayed in the tree.
+
+---
+
 ## 2026-10-25 — `create_item` into an item; location parents stay location-only (#18)
 
 ### Why

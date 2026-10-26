@@ -228,3 +228,20 @@ def test_move_unknown_destination(router, good_status):
     result = hb.move_item("Lens", "Basement")
     assert "no location or item named 'Basement'" in result["error"]
     assert not patches["lens"].called
+
+
+def test_move_refuses_a_location(router, good_status):
+    # a location's assetId resolves to the location (#19); registered before
+    # _inventory's /assets route, so it matches first
+    router.get("/assets/000-050").mock(return_value=httpx.Response(
+        200, json={"items": [{"id": "w1"}]}))
+    router.get("/entities/w1").mock(return_value=httpx.Response(200, json={
+        "id": "w1", "name": "West wall", "assetId": "000-050",
+        "entityType": {"isLocation": True}, "fields": []}))
+    wall = router.patch("/entities/w1").mock(return_value=httpx.Response(200, json={}))
+    _inventory(router, {"bag": ("Camera Bag", ["Office", "Camera Bag"])})
+    import homebox_mcp as hb
+    result = hb.move_item("000-050", "Camera Bag")
+    assert "is a location" in result["error"]
+    assert "set_location" in result["error"]
+    assert not wall.called
