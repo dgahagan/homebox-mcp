@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [1.3.0] - 2026-10-25
 
 ### Changed
 - `move_item` can move an item **into another item** (e.g. a lens into a
@@ -202,6 +202,7 @@ versioning: [SemVer](https://semver.org/).
 - Default branch renamed `master` → `main`.
 - `.env.example` documents all supported environment variables.
 
+[1.3.0]: https://github.com/dgahagan/homebox-mcp/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/dgahagan/homebox-mcp/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/dgahagan/homebox-mcp/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/dgahagan/homebox-mcp/compare/v1.0.0...v1.0.1
