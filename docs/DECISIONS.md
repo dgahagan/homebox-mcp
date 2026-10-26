@@ -6,6 +6,43 @@ v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
 
 ---
 
+## 2026-10-25 — `create_item` into an item; location parents stay location-only (#18)
+
+### Why
+
+#7 let `move_item` put an item inside another item. `create_item` still
+accepted only a location, so creating a lens in a camera bag took two calls.
+
+### What changed
+
+`create_item` resolves `location` with `_find_destination`, the same
+resolver as `move_item`. The order is unchanged: strict assetId, then
+location, then item.
+
+### Not changed, and why
+
+- **`set_location(parent=…)` and `create_location(parent=…)`.** A live probe
+  on 0.26 found that Homebox accepts a location placed under an item. The
+  location then disappears from `/entities/tree`, even with
+  `withItems=true`. `_find_location`, `list_locations` and `delete_location`
+  can no longer find it by name. An item parent there would hide the
+  location, so they stay location-only.
+- **`import_csv`.** It sends `HB.location` to Homebox's own import, which
+  creates missing locations by name. There is no resolver on our side to
+  share.
+
+The probe also showed that `move_item` can do the same damage today: a
+location's assetId resolves to the location. That is tracked in #19.
+
+### Verified
+
+Seven tests in `tests/test_create.py`. The five item-parent and error cases
+fail on the old code. A live run with `ZZ ` entities created items by item
+name, path and assetId, and checked that a location still wins over an item
+with the same full path. All test entities were deleted.
+
+---
+
 ## 2026-10-25 — Read an identifier as an assetId only in `000-012` form (#14)
 
 ### Why
