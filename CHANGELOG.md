@@ -17,6 +17,14 @@ versioning: [SemVer](https://semver.org/).
   name that matches more than one item is refused, as is moving an item into
   itself or into an item it contains.
 
+### Fixed
+- An identifier is read as an assetId only in the full `000-012` form
+  ([#14](https://github.com/dgahagan/homebox-mcp/issues/14)). Homebox reads
+  `12` and `1-2` as asset `000-012` too, so an item named or aliased `12`
+  could not be reached, and a write to it went to whatever entity had asset
+  `000-012` — on one real instance, a location. This applies to every tool
+  that takes an `identifier`.
+
 ## [1.2.0] - 2026-10-21
 
 ### Security

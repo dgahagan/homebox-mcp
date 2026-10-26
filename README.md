@@ -112,7 +112,9 @@ clone workflow):
 ~39 tools. Reads accept a **fuzzy** identifier (assetId, alias field, exact
 name, then first keyword match). Write tools require an **exact** identifier
 (assetId, alias field, or exact name) — a typo or an ambiguous match is refused
-rather than mutating the wrong item. Locations are referenced by name or
+rather than mutating the wrong item. An assetId must be in the full
+`000-012` form: a bare `12` is matched as a name or alias, never as asset
+`000-012`. Locations are referenced by name or
 `/`-separated path (e.g. `Garage/Shelf 1`) to disambiguate duplicate names.
 
 ### Read / Q&A

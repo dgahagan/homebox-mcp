@@ -6,6 +6,47 @@ v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
 
 ---
 
+## 2026-10-25 — Read an identifier as an assetId only in `000-012` form (#14)
+
+### Why
+
+Homebox's `ParseAssetID` strips `-` and runs `Atoi`, so `12`, `1-2` and
+`000-012` all mean asset `000-012`. Every resolver tried `/assets` first. An
+item named or aliased `12` was therefore unreachable, and a write to it went
+to whichever entity held asset `000-012`. On the production instance that
+entity is a location ("West wall"). #7 fixed this for `move_item`
+destinations only.
+
+### What changed
+
+`_asset_lookup` returns `None` without calling Homebox unless the
+identifier fully matches `\d{3}-\d{3,}`. `_resolve_exact`, `_resolve_fuzzy`
+and `_find_destination` all go through it, so the rule is in one place.
+
+### Alternatives rejected
+
+- **Keep the loose lookup, but prefer a name or alias match over it.** That
+  costs a keyword search, and often a full alias scan, on every assetId
+  call. It also leaves `12` meaning two things.
+- **Fix only the write resolver.** A read of `12` would then show a
+  different entity from the one a write to `12` changes.
+
+### Checked first
+
+No skill or doc passes a short-form assetId. The skills use assetIds from
+server responses, which are always in `000-xxx` form. Every `item_id` alias
+on the production instance is a slug, never a number. So nothing in use
+depended on the loose form.
+
+### Verified
+
+Three new tests in `tests/test_resolve.py` fail on the old code and pass on
+the new. A live run created a `ZZ ` item with `item_id` `12`. Both resolvers
+returned that item, and `000-012` still returned West wall. `move_item("12",
+…)` moved the `ZZ ` item, and West wall was unchanged.
+
+---
+
 ## 2026-10-25 — `move_item` into an item: locations first (#6, #7)
 
 ### Why

@@ -378,8 +378,17 @@ def _search_all(
     return out
 
 
+_ASSET_ID_RE = re.compile(r"\d{3}-\d{3,}")
+
+
 def _asset_lookup(ident: str) -> Optional[dict]:
-    """Full entity detail by assetId (e.g. '000-028'), or None."""
+    """Full entity detail by assetId in the strict '000-028' form, or None.
+
+    Anything else returns None without asking Homebox: its ParseAssetID
+    strips '-' and reads an integer, so a bare '12' would mean asset 000-012
+    and hijack an item, alias or bin named '12' (#14)."""
+    if not _ASSET_ID_RE.fullmatch(ident.strip()):
+        return None
     try:
         ares = _get(f"/assets/{ident}")
         items = ares.get("items") if isinstance(ares, dict) else None
@@ -1262,9 +1271,6 @@ def set_identity(
     }
 
 
-_ASSET_ID_RE = re.compile(r"\d{3}-\d{3,}")
-
-
 def _find_destination(ref: str) -> tuple[Optional[dict], Optional[str]]:
     """Resolve where to move an item: a location OR a container item (0.26
     unified entities — any entity can be a parent, e.g. lenses in a camera
@@ -1293,7 +1299,7 @@ def _find_destination(ref: str) -> tuple[Optional[dict], Optional[str]]:
                 "path": "/".join(n.get("name", "") for n in nodes),
                 "ancestor_ids": [n.get("id") for n in nodes]}
 
-    if len(want) == 1 and _ASSET_ID_RE.fullmatch(want[0]):
+    if len(want) == 1:
         full = _asset_lookup(want[0])
         if full:
             nodes = _path_nodes(full["id"])
