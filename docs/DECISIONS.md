@@ -6,6 +6,67 @@ v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
 
 ---
 
+## 2026-10-25 — `move_item` into an item: locations first (#6, #7)
+
+### Why
+
+Homebox 0.26 made items and locations both entities, so an item can be the
+parent of another item (a lens in a camera bag). `move_item` looked up its
+destination only as a location. PR #7 (by @wmorland) adds item destinations.
+
+### What changed
+
+`_find_destination` resolves `location` in this order:
+
+1. **An assetId in the strict `000-012` form** goes to that entity.
+2. **A location** by name or path, exactly as before. If any location
+   matches, no items are looked up.
+3. **Only if no location matches, an item** by exact name, narrowed by a
+   path. Item ancestors count as path segments (`Camera Bag/Lens Pouch`).
+
+A move into the item itself, or into an item it contains, is refused. More
+than one matching item is refused, and the error lists each assetId.
+
+### Alternatives rejected
+
+- **Match locations and items in one pass** (the first version of #7). A
+  location and an item can have the same full path: the location
+  `House/Office/Desk` and an item `Desk` in `House/Office`. Every ref then
+  matches both and is refused. A location has no assetId to use instead, so
+  nothing could be moved into that location again. One pass also made every
+  move to a location do a keyword search plus a GET per result, which costs
+  hundreds of calls on a common word like `Office`.
+- **Refuse a location/item clash at the same depth.** For the same reason,
+  this makes the location unreachable. With locations first, a bare name
+  goes to the location as it always did, and the item is still reachable by
+  its assetId.
+- **Move anyway, but add a note naming the clashing item.** Needs a search
+  on every move to a location. The assetId already covers the item case.
+- **Accept any assetId form.** Homebox's `ParseAssetID` strips `-` and runs
+  `Atoi`, so `12` means asset `000-012`. A loose form takes over numbered
+  bins and shelves. Only the strict form goes to `/assets`.
+- **Match item destinations by alias field.** The alias field is not
+  indexed by keyword search, so this needs a scan of the whole inventory.
+  A partial version let the description decide whether the alias matched.
+  Destinations match by exact name only.
+
+### Open
+
+- The *item being moved* (and every write tool's `identifier`) still goes
+  through `_asset_lookup` in any form, so `12` resolves to asset `000-012`.
+  Tracked in #14.
+- `create_item`, `import_csv` and `set_location` still accept only a
+  location as the parent. A shared resolver could come later.
+
+### Verified
+
+Unit tests in `tests/test_move.py`. A live run against a production
+instance used throwaway `ZZ ` entities. It passed 12 checks, including a
+bin named `12` while asset `000-012` exists, and the `Desk` same-path case.
+All test entities were deleted, and each returned 404 afterwards.
+
+---
+
 ## 2026-10-21 — SHA-pin every action; checkout v7, setup-uv v10
 
 ### Why
