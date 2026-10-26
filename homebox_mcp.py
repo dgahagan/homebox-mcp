@@ -34,7 +34,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 
 # ---------------------------------------------------------------------------
