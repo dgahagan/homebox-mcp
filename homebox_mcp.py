@@ -1353,6 +1353,11 @@ def move_item(identifier: str, location: str) -> dict:
     full, err = _resolve_exact(identifier)
     if err:
         return {"error": err}
+    # a location's assetId resolves to the location; under an item, Homebox
+    # drops it from /entities/tree and it can't be found by name again (#19)
+    if _is_location(full):
+        return {"error": f"'{identifier}' is a location — use "
+                         f"set_location(parent=...) to move it"}
     m, lerr = _find_destination(location)
     if lerr:
         return {"error": lerr}

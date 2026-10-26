@@ -147,7 +147,7 @@ touch (a full-body PUT that echoes the rest of the item back — see
 | Tool | Purpose |
 |------|---------|
 | `set_item(identifier, new_name?, description?, notes?, quantity?, purchase_price?, purchase_date?, purchase_from?, insured?, archived?, fields?)` | General item editor: rename, notes, quantity, purchase info, insured/archived flags, custom fields. Quantity-only edits use a partial PATCH. |
-| `move_item(identifier, location)` | Move an item into a location or into another item (e.g. a lens into `Camera Bag`). The destination is a location name or path, as before; only if no location matches is it looked up as an item by exact name or path (e.g. `Office/Camera Bag`), or give the item's assetId. A name matching more than one is refused (partial PATCH — nothing else changes). |
+| `move_item(identifier, location)` | Move an item into a location or into another item (e.g. a lens into `Camera Bag`). The destination is a location name or path, as before; only if no location matches is it looked up as an item by exact name or path (e.g. `Office/Camera Bag`), or give the item's assetId. A name matching more than one is refused, and so is a location as the item to move — use `set_location` (partial PATCH — nothing else changes). |
 | `set_warranty(identifier, expires?, lifetime?, details?)` | Set warranty end date, lifetime flag, and terms summary. |
 | `set_identity(identifier, manufacturer?, model_number?, serial_number?)` | Set manufacturer / model / serial (e.g. after a nameplate photo reveals them). |
 | `set_fields(identifier, fields)` | Create or overwrite custom fields (upsert; typed by JSON value type). |

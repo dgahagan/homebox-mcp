@@ -15,6 +15,13 @@ versioning: [SemVer](https://semver.org/).
   the parent: Homebox drops a location placed under an item from the
   location tree.
 
+### Fixed
+- `move_item` refuses a location
+  ([#19](https://github.com/dgahagan/homebox-mcp/issues/19)). A location's
+  assetId resolved to the location, so `move_item` could move it under an
+  item. Homebox then drops it from the location tree, and it can no longer be
+  found by name. Use `set_location(parent=…)` to move a location.
+
 ## [1.3.0] - 2026-10-25
 
 ### Changed
