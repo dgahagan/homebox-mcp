@@ -6,6 +6,8 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-10
+
 ### Fixed
 - An archived item can be found by name or alias field. Homebox hides
   archived items from a listing, so `set_item("Old drill", archived=False)`
@@ -261,7 +263,8 @@ versioning: [SemVer](https://semver.org/).
 - Default branch renamed `master` → `main`.
 - `.env.example` documents all supported environment variables.
 
-[Unreleased]: https://github.com/dgahagan/homebox-mcp/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/dgahagan/homebox-mcp/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/dgahagan/homebox-mcp/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/dgahagan/homebox-mcp/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/dgahagan/homebox-mcp/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/dgahagan/homebox-mcp/compare/v1.2.0...v1.3.0
