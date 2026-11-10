@@ -231,6 +231,12 @@ exposes. These are hard-won behaviors of the 0.26 entities API:
   appear in `/entities` results, even with `parentIds` — sub-locations come from
   the entity tree (`/entities/tree`). `location_contents` merges both sources, and
   `delete_location`'s emptiness check counts items *and* sub-locations.
+- **Archived items are hidden from listings.** `GET /entities` leaves them
+  out unless `includeArchived=true` is sent (the swagger does not list the
+  parameter). Listings here hide them too; `search_items(include_archived=True)`
+  shows them. An exact name or alias still finds an archived item when no
+  active item matches, `delete_location` counts them, and `field_index`
+  includes them.
 - **Deleting a non-empty location cascades sub-locations but orphans items.**
   Force-deleting a location (`confirm_nonempty=True`) deletes its sub-locations
   with it, but its **items survive**, re-parented to the top level. Move items
