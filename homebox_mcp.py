@@ -413,6 +413,10 @@ def _exact_matches(ident: str) -> list[dict]:
     nothing matched and an alias field is configured — a full scan, since `q`
     does not index custom fields. List responses are lightweight summaries, so
     full detail is fetched before matching.
+
+    Active items win. Archived items are looked at only when no active item
+    matches, so a name or alias that resolved before still resolves to the
+    same item, and an archived item stays reachable (e.g. to un-archive it).
     """
     def hit(full: dict) -> bool:
         if HOMEBOX_ALIAS_FIELD and (
@@ -420,16 +424,26 @@ def _exact_matches(ident: str) -> list[dict]:
             return True
         return (full.get("name") or "").lower() == ident.lower()
 
-    candidates = [_get(f"/entities/{e['id']}") for e in _search_all(q=ident)]
-    matches = {full["id"]: full for full in candidates if hit(full)}
-    if not matches and HOMEBOX_ALIAS_FIELD:
-        for e in _search_all():
-            if _is_location(e):
-                continue
-            full = _get(f"/entities/{e['id']}")
-            if hit(full):
-                matches[full["id"]] = full
-    return list(matches.values())
+    def scan(archived: bool) -> dict[str, dict]:
+        # The archived pass asks Homebox for everything (it has no
+        # archived-only filter) and keeps the archived rows; list rows carry
+        # `archived`, so no detail is fetched for the active ones again.
+        def rows(**kw) -> list[dict]:
+            found = _search_all(include_archived=archived, **kw)
+            return [e for e in found if e.get("archived")] if archived else found
+
+        candidates = [_get(f"/entities/{e['id']}") for e in rows(q=ident)]
+        matches = {full["id"]: full for full in candidates if hit(full)}
+        if not matches and HOMEBOX_ALIAS_FIELD:
+            for e in rows():
+                if _is_location(e):
+                    continue
+                full = _get(f"/entities/{e['id']}")
+                if hit(full):
+                    matches[full["id"]] = full
+        return matches
+
+    return list((scan(archived=False) or scan(archived=True)).values())
 
 
 def _resolve_exact(identifier: str) -> tuple[Optional[dict], Optional[str]]:
@@ -1737,7 +1751,7 @@ def delete_location(
     must equal the location's exact name. A location that still contains items
     or sub-locations is refused unless `confirm_nonempty=True` — sub-locations
     are deleted with it, and its items are ORPHANED to the top level (not
-    deleted). There is no undo."""
+    deleted). Archived items count as contents. There is no undo."""
     m, err = _find_location(location)
     if err:
         return {"error": err}
@@ -1745,7 +1759,9 @@ def delete_location(
     if gate:
         return gate
     sublocs = m["node"].get("children") or []       # tree: /entities omits locations
-    items = _search_all(parent_ids=m["id"])
+    # archived items count: Homebox hides them from a plain listing, and a
+    # location that holds only archived items must not look empty
+    items = _search_all(parent_ids=m["id"], include_archived=True)
     if (sublocs or items) and not confirm_nonempty:
         return {"error": f"not deleted: '{m['path']}' contains {len(items)} "
                          f"item(s), {len(sublocs)} sub-location(s). Move them "
@@ -1859,13 +1875,14 @@ def field_index(field_name: Optional[str] = None) -> dict:
     custom field — a one-pass index for DEDUPE before a bulk import (q does
     not index custom fields, so this scans every entity). `field_name`
     defaults to $HOMEBOX_ALIAS_FIELD. assetId may be empty for un-asset'd
-    rows. Deliberately uncapped: a truncated dedupe index causes duplicates,
+    rows. Archived items are included: their values are still taken.
+    Deliberately uncapped: a truncated dedupe index causes duplicates,
     so expect a large result on a large inventory."""
     fname = (field_name or HOMEBOX_ALIAS_FIELD or "").strip()
     if not fname:
         raise ToolError("pass field_name (no HOMEBOX_ALIAS_FIELD is configured)")
     out: dict[str, str] = {}
-    for e in _search_all():
+    for e in _search_all(include_archived=True):
         full = _get(f"/entities/{e['id']}")
         val = next((_field_value(f) for f in full.get("fields") or []
                     if f.get("name") == fname), None)

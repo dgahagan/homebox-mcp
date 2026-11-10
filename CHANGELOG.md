@@ -6,6 +6,17 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- An archived item can be found by name or alias field. Homebox hides
+  archived items from a listing, so `set_item("Old drill", archived=False)`
+  found nothing and only the assetId worked. An active item still wins: an
+  archived item is used only when no active item matches.
+- `delete_location` counts archived items as contents. A location that held
+  only archived items looked empty and was deleted without
+  `confirm_nonempty=True`, which orphaned them.
+- `field_index` includes archived items, so a dedupe before a bulk import
+  sees their values.
+
 ## [1.5.0] - 2026-11-10
 
 ### Added

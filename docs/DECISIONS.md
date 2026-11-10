@@ -7,6 +7,62 @@ Both are archived: everything in them has shipped.
 
 ---
 
+## 2026-11-10 — Archived items: reachable by name, counted on delete
+
+### Why
+
+Homebox leaves archived items out of `GET /entities` unless
+`includeArchived=true` is sent. 1.5.0 added that switch to `search_items`
+and recorded the rest as an open question. Reading every caller of
+`_search_all` then found three places where the hidden items give a wrong
+result, one of them in a delete.
+
+### What changed
+
+- **`_exact_matches` falls back to archived items.** It runs the same
+  two-step lookup as before on active items. Only if that finds nothing does
+  it run again on archived items.
+- **`delete_location` counts archived items.** A location that held only
+  archived items passed the emptiness check. The delete then orphaned them
+  to the top level without `confirm_nonempty=True`.
+- **`field_index` includes archived items.** It exists to prevent duplicates
+  before an import, and an archived item still holds its alias value.
+
+### Why active items win instead of one merged lookup
+
+A merged lookup would make an old behavior worse. A common history is: sell
+the drill, archive it, buy another, give it the same name. Today
+`set_item("Drill")` updates the new one. With a merged lookup the same call
+would be refused as ambiguous. With the fallback, every identifier that
+resolved before resolves to the same item, and the only new result is a
+match where there was none.
+
+### Why the archived pass is cheap
+
+Homebox has no archived-only filter, so the archived pass asks for
+everything. The list rows carry `archived`, so the pass fetches detail only
+for the archived rows. A miss with an alias field configured used to cost
+one detail GET per item; it now costs that plus one per archived item.
+
+### Why the fuzzy read fallback and the listings stay active-only
+
+`get_item("drill")` falls back to the first keyword hit. An archived hit
+there would be a guess about an item the user has put away, so the fallback
+does not look. `warranties_expiring`, `location_contents` and default
+`search_items` answer "what do I have", which is what the archive flag
+removes an item from. The move and create destination lookup is unchanged
+too: putting an item into an archived container is not a case anyone asked
+for.
+
+### Verified
+
+14 new tests in `tests/test_archived.py`; 7 fail on the 1.5.0 code. One of
+them asserts the request count of the archived pass. 162 tests pass and
+ruff is clean. A read-only run against a live 0.26.2 instance resolved each
+of its 3 archived items by name with `get_item`. No write ran live.
+
+---
+
 ## 2026-11-10 — Completeness pass: search filters, sold fields, a test per tool
 
 ### Why
@@ -36,6 +92,10 @@ templates, and two planning documents that read as open work.
 - **Repository:** `SECURITY.md`, issue forms, a PR template, an `Unreleased`
   changelog section, Python 3.14 in CI, and the `Production/Stable`
   classifier. `PLAN.md` and `REVIEW.md` moved to `docs/archive/`.
+
+The `main: require CI` ruleset names its required checks by Python version.
+`test (3.14, lowest)` and `test (3.14, latest)` were added to it on
+2026-11-10, after the 3.14 jobs had run green on two PRs.
 
 ### Why a location filter matches sub-locations but not items inside items
 
@@ -86,10 +146,8 @@ affected.
 
 ### Not changed
 
-By-name resolution (`_exact_matches`) still does not see archived items, so
-`set_item("Old drill", archived=False)` finds nothing; the assetId works.
-Changing that alters what every write tool can match, so it needs its own
-decision.
+By-name resolution (`_exact_matches`) did not see archived items in 1.5.0.
+The entry above this one changes that.
 
 ### Verified
 
