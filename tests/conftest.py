@@ -15,7 +15,10 @@ import os
 os.environ["HOMEBOX_URL"] = "http://homebox.test"
 os.environ["HOMEBOX_TOKEN"] = "test-token"
 os.environ["HOMEBOX_ALIAS_FIELD"] = "item_id"
-os.environ.pop("HOMEBOX_LABEL_DIR", None)
+# Set to "", not popped: the module's .env loader uses setdefault, so a popped
+# key is refilled from a developer's real .env and label tests then write
+# into their real label directory.
+os.environ["HOMEBOX_LABEL_DIR"] = ""
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
@@ -65,3 +68,11 @@ def mock_status(router):
 def good_status(mock_status):
     """Register a supported /status so tool calls pass the version guard."""
     mock_status()
+
+
+@pytest.fixture
+def box(router):
+    """A stateful in-memory Homebox (see fake_homebox.py). It answers every
+    request itself, /status included — do not combine it with `good_status`."""
+    from fake_homebox import FakeHomebox
+    return FakeHomebox(router)

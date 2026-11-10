@@ -1,8 +1,104 @@
 # Decision log
 
 Reasoning behind non-obvious changes, newest first. Companion documents:
-[REVIEW.md](REVIEW.md) (the original feature-completeness review that drove
-v0.9) and [PLAN.md](PLAN.md) (the phased implementation plan).
+[REVIEW.md](archive/REVIEW.md) (the original feature-completeness review that
+drove v0.9) and [PLAN.md](archive/PLAN.md) (the phased implementation plan).
+Both are archived: everything in them has shipped.
+
+---
+
+## 2026-11-10 — Completeness pass: search filters, sold fields, a test per tool
+
+### Why
+
+A review of the project after 1.4.0 found no open plan items, but three kinds
+of gap. Two read tools returned less than the write tools could set. 21 of 39
+tools had no test. The repository had no security policy, no issue or PR
+templates, and two planning documents that read as open work.
+
+### What changed
+
+- **`get_item` returns the sold fields.** `mark_sold` wrote `soldDate`,
+  `soldTo`, `soldPrice` and `soldNotes`, and no read tool returned them. This
+  completes #25, which did the same for `description`, `insured`, `archived`
+  and `warrantyDetails`.
+- **`search_items(location=…)`.** The location is resolved as everywhere else
+  (name or `/` path). The search sends the id of that location and of every
+  location beneath it as `parentIds`, 40 ids per request.
+- **`search_items(include_archived=…)`.** Homebox hides archived items from
+  `GET /entities`, so an archived item could not be found by search at all.
+  The flag sends `includeArchived=true`. A summary row carries
+  `archived: true` only for an archived item, so normal output is unchanged.
+- **A test for every tool.** `tests/fake_homebox.py` is an in-memory Homebox
+  that keeps state. Its PUT replaces the entity, as Homebox 0.26 does. A write
+  tool that forgets to preserve a field now fails a test, where before only
+  `_preserve_item_body` was tested and the tools that call it were not.
+- **Repository:** `SECURITY.md`, issue forms, a PR template, an `Unreleased`
+  changelog section, Python 3.14 in CI, and the `Production/Stable`
+  classifier. `PLAN.md` and `REVIEW.md` moved to `docs/archive/`.
+
+### Why a location filter matches sub-locations but not items inside items
+
+"Power tools in the Garage" means the whole garage, shelves included, so a
+direct-children filter would give the wrong answer to the usual question.
+The location tree is already in hand from resolving the name, so the
+sub-location ids cost no extra request. Items inside items are different:
+finding them needs one request per container item. `location_contents(
+recursive=True)` already does that walk, and the docstring points to it.
+
+### Why `includeArchived` although the swagger omits it
+
+Homebox 0.26.2's swagger lists only `q`, `page`, `pageSize`, `tags` and
+`parentIds` for `GET /entities`. A read-only probe of a live 0.26.2 instance
+returned 639 items without the parameter and 642 with it. The server honors
+it; the swagger is incomplete. The same probe showed that repeated
+`parentIds` are ORed (33 + 4 = 37) and that `q` and `parentIds` are ANDed.
+
+### Why a fake server instead of more per-test route mocks
+
+The older tests register one respx route per request. That works for a
+resolver test, but a write tool makes four or five requests, and a canned
+GET response cannot show whether the PUT wiped a field. The fake keeps one
+entity and applies the PUT to it, so the assertion reads the stored state.
+The older tests keep their route mocks; they test request order and counts,
+which the fake does not constrain.
+
+### Why the README states release provenance
+
+Every file on PyPI from 0.9.0 to 1.4.0 (16 files) carries a PEP 740
+attestation naming this repository, `publish.yml` and the `pypi`
+environment. `pypa/gh-action-pypi-publish` produces them by default under
+trusted publishing, so the workflow did not change. The README did not say
+so, and a user had no stated way to tell this package from a copy. The
+verify command in the README was run against the 1.4.0 wheel and returned
+`OK`. The text claims a tie to the repository and workflow, not to an exact
+commit: the commit is in the signing certificate, but the verify command
+does not print it.
+
+### Found on the way
+
+`tests/conftest.py` popped `HOMEBOX_LABEL_DIR`, but the module's `.env`
+loader uses `setdefault`, so a developer's real `.env` put the value back. A
+label test would then write into the real label directory. The first run of
+the new `qrcode` test did exactly that (one 7-byte file, removed). conftest
+now sets the variable to an empty string. CI has no `.env`, so it was never
+affected.
+
+### Not changed
+
+By-name resolution (`_exact_matches`) still does not see archived items, so
+`set_item("Old drill", archived=False)` finds nothing; the assetId works.
+Changing that alters what every write tool can match, so it needs its own
+decision.
+
+### Verified
+
+148 tests pass on Python 3.13 and 3.14 (78 before). Ruff 0.16.7 is clean.
+The search parameters were probed read-only against a live 0.26.2 instance.
+The new `search_items` filters then ran read-only against the same instance:
+a location with 20 sub-locations returned 164 items (14 are direct children),
+and `include_archived` added the 3 archived items, each flagged. No write
+tool was run live; the write tools did not change.
 
 ---
 
@@ -492,7 +588,7 @@ and attachment downloads.
 
 ---
 
-## 2026-07-03 — v0.9 design decisions (summary; details in REVIEW.md/PLAN.md)
+## 2026-07-03 — v0.9 design decisions (summary; details in archive/REVIEW.md and archive/PLAN.md)
 
 - **Single codebase, no personal fork** — personal conventions live in env
   config (`HOMEBOX_ALIAS_FIELD`, `HOMEBOX_LABEL_DIR`) and the caller's skills,

@@ -19,7 +19,8 @@ def test_many_tools_registered():
 def test_search_items_schema_properties():
     _, by_name = _tools_by_name()
     props = by_name["search_items"].input_schema.get("properties", {})
-    assert set(props) == {"query", "tags", "limit"}
+    assert set(props) == {"query", "tags", "limit", "location",
+                          "include_archived"}
 
 
 def test_delete_item_is_destructive():

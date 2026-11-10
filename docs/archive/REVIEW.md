@@ -1,5 +1,10 @@
 # Homebox MCP Server — Feature-Completeness Review
 
+> **Archived 2026-11-10.** This document is a record of the v0.9 work in
+> July 2026. Every item in it has shipped. It does not describe open work;
+> see the [issue tracker](https://github.com/dgahagan/homebox-mcp/issues)
+> and [DECISIONS.md](../DECISIONS.md) for the current state.
+
 *Date: 2026-07-03 · Reviewed against: Homebox v0.26.2 (live instance), swagger spec (67 API paths), server.py @ fbbf15b*
 
 ## How this review was done
