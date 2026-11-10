@@ -10,12 +10,12 @@
 published from this repository via PyPI trusted publishing. Every release
 carries a signed provenance attestation that ties the wheel and sdist to this
 repository and the workflow that built them. Verify any version without
-installing it (replace `1.4.0` with the version you want to check):
+installing it (replace `1.5.1` with the version you want to check):
 
 ```bash
 uvx pypi-attestations verify pypi \
   --repository https://github.com/dgahagan/homebox-mcp \
-  pypi:homebox_mcp-1.4.0-py3-none-any.whl
+  pypi:homebox_mcp-1.5.1-py3-none-any.whl
 ```
 
 An [MCP](https://modelcontextprotocol.io) server over the
