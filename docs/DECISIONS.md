@@ -63,6 +63,18 @@ entity and applies the PUT to it, so the assertion reads the stored state.
 The older tests keep their route mocks; they test request order and counts,
 which the fake does not constrain.
 
+### Why the README states release provenance
+
+Every file on PyPI from 0.9.0 to 1.4.0 (16 files) carries a PEP 740
+attestation naming this repository, `publish.yml` and the `pypi`
+environment. `pypa/gh-action-pypi-publish` produces them by default under
+trusted publishing, so the workflow did not change. The README did not say
+so, and a user had no stated way to tell this package from a copy. The
+verify command in the README was run against the 1.4.0 wheel and returned
+`OK`. The text claims a tie to the repository and workflow, not to an exact
+commit: the commit is in the signing certificate, but the verify command
+does not print it.
+
 ### Found on the way
 
 `tests/conftest.py` popped `HOMEBOX_LABEL_DIR`, but the module's `.env`

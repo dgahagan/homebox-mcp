@@ -5,6 +5,25 @@
 Only the latest release on [PyPI](https://pypi.org/project/homebox-mcp/) gets
 security fixes. Upgrade before you report: `uvx homebox-mcp@latest`.
 
+## Verify a release
+
+The only official package is
+[`homebox-mcp` on PyPI](https://pypi.org/project/homebox-mcp/). It is
+published from this repository by `.github/workflows/publish.yml` through
+PyPI trusted publishing, so no long-lived upload token exists. Every release
+file carries a signed provenance attestation. To check one without installing
+it (replace `1.4.0` with the version you want to check):
+
+```bash
+uvx pypi-attestations verify pypi \
+  --repository https://github.com/dgahagan/homebox-mcp \
+  pypi:homebox_mcp-1.4.0-py3-none-any.whl
+```
+
+`OK` means PyPI holds an attestation for that file, signed by a workflow in
+this repository. A package with a similar name, or a file that fails this
+check, did not come from here.
+
 ## Report a vulnerability
 
 Report it privately through GitHub:

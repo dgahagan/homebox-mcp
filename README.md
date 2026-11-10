@@ -6,6 +6,18 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/dgahagan/homebox-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/dgahagan/homebox-mcp/actions/workflows/ci.yml)
 
+✅ The official package is [`homebox-mcp` on PyPI](https://pypi.org/project/homebox-mcp/),
+published from this repository via PyPI trusted publishing. Every release
+carries a signed provenance attestation that ties the wheel and sdist to this
+repository and the workflow that built them. Verify any version without
+installing it (replace `1.4.0` with the version you want to check):
+
+```bash
+uvx pypi-attestations verify pypi \
+  --repository https://github.com/dgahagan/homebox-mcp \
+  pypi:homebox_mcp-1.4.0-py3-none-any.whl
+```
+
 An [MCP](https://modelcontextprotocol.io) server over the
 [Homebox](https://homebox.software) REST API, so an MCP client like Claude can
 work with your home inventory in plain language: *"where is my impact driver",*

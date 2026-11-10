@@ -12,6 +12,8 @@ versioning: [SemVer](https://semver.org/).
 - `search_items(include_archived=True)` includes archived items, which
   Homebox hides by default. They carry `archived: true`.
 - `SECURITY.md`, issue forms and a pull request template.
+- The README and `SECURITY.md` say how to verify a release's provenance
+  attestation. Every release since 0.9.0 has one.
 - Python 3.14 in the CI matrix.
 
 ### Fixed
