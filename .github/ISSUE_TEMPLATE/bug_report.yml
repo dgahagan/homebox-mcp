@@ -1,0 +1,57 @@
+name: Bug report
+description: A tool returned the wrong result, an error, or changed the wrong thing.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove your API key, your Homebox URL and any inventory data you do not want public.
+  - type: input
+    id: version
+    attributes:
+      label: homebox-mcp version
+      description: Your MCP client shows it in the server info. With pip, run `pip show homebox-mcp`.
+      placeholder: "1.4.0"
+    validations:
+      required: true
+  - type: input
+    id: homebox
+    attributes:
+      label: Homebox version
+      description: Shown at the bottom of the Homebox web UI, or in `GET /api/v1/status`. This server needs 0.26 or later.
+      placeholder: "v0.26.2"
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: "Claude Code 2.x, Claude Desktop, ..."
+  - type: textarea
+    id: call
+    attributes:
+      label: Tool call
+      description: The tool name and the arguments you passed.
+      render: text
+      placeholder: 'get_item(identifier="000-025")'
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: The tool result or the full error text.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: For example, whether it worked in an earlier version.

@@ -1,0 +1,30 @@
+name: Feature request
+description: A new tool, a new argument, or a Homebox feature the server does not cover.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What you want to do
+      description: The task in your own words, for example the request you would give your assistant.
+      placeholder: '"Show me everything in the garage that I have marked as loaned out."'
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What happens today
+      description: The tools you tried and where they fell short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed tool or argument
+      description: Optional. A name and arguments, if you have them in mind.
+  - type: input
+    id: endpoint
+    attributes:
+      label: Homebox API endpoint
+      description: Optional. The endpoint that already does this, if you know it.
+      placeholder: "GET /api/v1/..."

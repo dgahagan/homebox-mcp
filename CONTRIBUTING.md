@@ -35,6 +35,19 @@ uv run --with pytest --with respx --with . pytest
 >   --with pytest --with respx --with . pytest
 > ```
 
+For a tool that makes several requests, use the `box` fixture. It is an
+in-memory Homebox (`tests/fake_homebox.py`) that keeps state, and its PUT
+clears omitted fields as the real server does. Seed it, call the tool, then
+assert on what the entity holds:
+
+```python
+def test_set_identity_keeps_the_warranty(box):
+    saw = box.add_item("Saw", warrantyDetails="3 year")
+    hb.set_identity("Saw", serial_number="SN2")
+    assert saw["serialNumber"] == "SN2"
+    assert saw["warrantyDetails"] == "3 year"
+```
+
 ## Lint
 
 Code is linted with [`ruff`](https://docs.astral.sh/ruff/) (config in
@@ -49,7 +62,7 @@ uv run --with ruff ruff check .
 - **Add tests for behavior changes.** The full-body-PUT preserve logic and the
   typed custom-field handling are exactly the kind of thing that regresses
   silently — cover new or changed behavior with a mocked-httpx test.
-- **Update [`CHANGELOG.md`](CHANGELOG.md)** under the `Unreleased` section
+- **Update [`CHANGELOG.md`](CHANGELOG.md)** under the `Unreleased` section at the top
   ([Keep a Changelog](https://keepachangelog.com/) format).
 - **Keep it lint-clean** (`ruff check .` passes).
 - **Keep tool docstrings accurate** — they are the source of truth for the tool

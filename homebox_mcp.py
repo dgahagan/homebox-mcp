@@ -341,6 +341,8 @@ def _summarize(entity: dict, with_path: bool = False) -> dict:
         out[HOMEBOX_ALIAS_FIELD] = _field(entity, HOMEBOX_ALIAS_FIELD)
     parent = entity.get("parent") or {}
     out["location"] = parent.get("name")
+    # only ever seen when a caller asked for archived items; absent otherwise
+    out["archived"] = entity.get("archived") or None
     if with_path and entity.get("id"):
         out["location_path"] = _location_path(entity["id"])
     return _compact(out)
@@ -348,14 +350,18 @@ def _summarize(entity: dict, with_path: bool = False) -> dict:
 
 def _search_all(
     q: Optional[str] = None,
-    parent_ids: Optional[str] = None,
+    parent_ids: Optional[str | list[str]] = None,
     tags: Optional[list[str]] = None,
     page_size: int = 200,
+    include_archived: bool = False,
 ) -> list[dict]:
     """Every matching entity, following pagination until the reported `total`
     is reached (a single page silently truncates inventories larger than the
-    page size). `tags` is a list of tag IDS (repeated query params). Results
-    are lightweight summaries — no `fields`, empty `assetId`; fetch
+    page size). `tags` is a list of tag IDS and `parent_ids` one id or a list
+    of them (repeated query params; an item matches if ANY listed id is its
+    direct parent). Homebox hides archived items unless `include_archived`
+    (`includeArchived=true` — honored by 0.26 though its swagger omits it).
+    Results are lightweight summaries — no `fields`, empty `assetId`; fetch
     GET /entities/{id} for full detail.
 
     NOTE: /entities returns NON-LOCATION entities only (items) — location
@@ -365,6 +371,7 @@ def _search_all(
     page = 1
     while True:
         data = _get("/entities", q=q, parentIds=parent_ids, tags=tags,
+                    includeArchived="true" if include_archived else None,
                     page=page, pageSize=page_size)
         if isinstance(data, dict):
             batch = data.get("items") or data.get("entities") or []
@@ -466,6 +473,17 @@ def _resolve_fuzzy(identifier: str) -> Optional[dict]:
     return None
 
 
+_PARENT_ID_CHUNK = 40
+
+
+def _subtree_ids(node: dict) -> list[str]:
+    """The id of a location-tree node and of every location beneath it."""
+    out = [node["id"]]
+    for c in node.get("children") or []:
+        out.extend(_subtree_ids(c))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Tools — read
 # ---------------------------------------------------------------------------
@@ -475,9 +493,18 @@ def search_items(
     query: Optional[str] = None,
     tags: Optional[list[str]] = None,
     limit: int = 20,
+    location: Optional[str] = None,
+    include_archived: bool = False,
 ) -> list[dict]:
-    """Search inventory items by name/keyword and/or by tag names (AND of
-    both when both given — e.g. everything tagged "power-tool").
+    """Search inventory items by name/keyword, by tag names, and/or by
+    location (AND of whichever are given — e.g. everything tagged
+    "power-tool" in the Garage).
+
+    `location` is a location name or /-separated path; it matches items
+    directly in that location or in any of its sub-locations (not items
+    nested inside another item — use location_contents(recursive=True) for
+    those). Archived items are hidden unless `include_archived=True`; they
+    then carry `archived: true`.
 
     Returns items (not locations) with their immediate location, assetId, and
     the alias custom field (if $HOMEBOX_ALIAS_FIELD is configured). Use
@@ -490,12 +517,30 @@ def search_items(
         if missing:
             raise ToolError(f"unknown tag(s) {missing} — see list_tags")
         tag_ids = [known[t.lower()] for t in tags]
-    if not query and not tag_ids:
-        raise ToolError("pass query and/or tags")
-    results = [e for e in _search_all(q=query, tags=tag_ids)
-               if not _is_location(e)]
+    if not query and not tag_ids and not location:
+        raise ToolError("pass query, tags and/or location")
+
+    if location:
+        target, err = _find_location(location)
+        if err:
+            raise ToolError(err)
+        parent_ids = _subtree_ids(target["node"])
+        # one request per chunk keeps the query string short on a location
+        # with hundreds of sub-locations
+        chunks = [parent_ids[i:i + _PARENT_ID_CHUNK]
+                  for i in range(0, len(parent_ids), _PARENT_ID_CHUNK)]
+    else:
+        chunks = [None]
+
+    seen: dict[str, dict] = {}
+    for chunk in chunks:
+        for e in _search_all(q=query, parent_ids=chunk, tags=tag_ids,
+                             include_archived=include_archived):
+            if not _is_location(e):
+                seen.setdefault(e["id"], e)
     # list responses omit assetId/fields, so fetch full detail for the page
-    return [_summarize(_get(f"/entities/{e['id']}")) for e in results[:limit]]
+    return [_summarize(_get(f"/entities/{e['id']}"))
+            for e in list(seen.values())[:limit]]
 
 
 @mcp.tool(annotations=_READONLY)
@@ -504,7 +549,8 @@ def get_item(identifier: str) -> dict:
     """Get full detail for one item by assetId (e.g. 000-028), alias custom
     field, or name (fuzzy fallback: first keyword match). Includes description,
     location path, serial, model, purchase, warranty, insured/archived status,
-    custom fields, tags, and attachments."""
+    sold details (if mark_sold recorded any), custom fields, tags, and
+    attachments."""
     e = _resolve_fuzzy(identifier)
     if not e:
         return {"error": f"no item found matching '{identifier}'"}
@@ -526,6 +572,10 @@ def get_item(identifier: str) -> dict:
         "warrantyExpires": e.get("warrantyExpires") or None,
         "lifetimeWarranty": e.get("lifetimeWarranty") or None,
         "warrantyDetails": e.get("warrantyDetails") or None,
+        "soldDate": e.get("soldDate") or None,
+        "soldTo": e.get("soldTo") or None,
+        "soldPrice": e.get("soldPrice") or None,
+        "soldNotes": e.get("soldNotes") or None,
         "notes": e.get("notes") or None,
         "tags": [t.get("name") for t in e.get("tags") or []] or None,
         "fields": {f.get("name"): _field_value(f) for f in e.get("fields") or []} or None,

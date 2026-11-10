@@ -1,5 +1,10 @@
 # Homebox MCP — Implementation Plan
 
+> **Archived 2026-11-10.** This document is a record of the v0.9 work in
+> July 2026. Every item in it has shipped. It does not describe open work;
+> see the [issue tracker](https://github.com/dgahagan/homebox-mcp/issues)
+> and [DECISIONS.md](../DECISIONS.md) for the current state.
+
 *Date: 2026-07-03 · Executes the decisions in [REVIEW.md](REVIEW.md). Scope: v1 public release (Tier 1 hardened) + personal migration. Tier 2 is listed at the end as v1.1 backlog only.*
 
 Sizes: **S** = under an hour, **M** = a session, **L** = multiple sessions.

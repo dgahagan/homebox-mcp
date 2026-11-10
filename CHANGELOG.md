@@ -4,6 +4,32 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `search_items(location=…)` restricts a search to a location and its
+  sub-locations. It composes with `query` and `tags`.
+- `search_items(include_archived=True)` includes archived items, which
+  Homebox hides by default. They carry `archived: true`.
+- `SECURITY.md`, issue forms and a pull request template.
+- Python 3.14 in the CI matrix.
+
+### Fixed
+- `get_item` returns `description`, `insured`, `archived` and
+  `warrantyDetails` ([#25](https://github.com/dgahagan/homebox-mcp/pull/25),
+  thanks @LoPromise), and the sold fields `soldDate`, `soldTo`, `soldPrice`
+  and `soldNotes`. The write tools could set all of them, but no read tool
+  returned them.
+- The test setup no longer lets a developer's `.env` supply
+  `HOMEBOX_LABEL_DIR`, which made label tests write outside the repository.
+
+### Changed
+- Every tool now has at least one test (148 tests, up from 78), run against
+  an in-memory Homebox whose PUT clears omitted fields as the real one does.
+- `docs/PLAN.md` and `docs/REVIEW.md` moved to `docs/archive/`. Both are
+  complete.
+- The PyPI classifier is `Development Status :: 5 - Production/Stable`.
+
 ## [1.4.0] - 2026-10-25
 
 ### Changed

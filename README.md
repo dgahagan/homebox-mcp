@@ -121,8 +121,8 @@ rather than mutating the wrong item. An assetId must be in the full
 
 | Tool | Purpose |
 |------|---------|
-| `search_items(query?, tags?, limit=20)` | Search items by keyword and/or tag names (AND of both); returns each with assetId, location, and the alias field. |
-| `get_item(identifier)` | Full detail for one item: location path, identity, purchase, warranty, custom fields, tags, attachments. |
+| `search_items(query?, tags?, limit=20, location?, include_archived=False)` | Search items by keyword, tag names, and/or location (AND of whichever are given). `location` covers its sub-locations. Archived items are hidden unless asked for. Returns each with assetId, location, and the alias field. |
+| `get_item(identifier)` | Full detail for one item: description, location path, identity, purchase, warranty, insured/archived, sold details, custom fields, tags, attachments. |
 | `list_locations()` | The full location tree as an indented outline. |
 | `location_contents(location, recursive=False)` | Items directly in a location plus its sub-location names; `recursive=True` walks the whole subtree and returns every nested item with its full location path. |
 | `list_tags(detail=False)` | All tag (label) names; `detail=True` returns full objects (description, color, icon, parent tag). |
@@ -282,6 +282,8 @@ Both rely on `pillow-heif`, which bundles libheif — there's no system package 
 install.
 
 ## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 - **API key handling.** In the clone workflow the key lives in `.env`, which is
   gitignored and should be mode `600` (`chmod 600 .env`). Never commit it. In the
