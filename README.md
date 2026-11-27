@@ -179,7 +179,8 @@ touch (a full-body PUT that echoes the rest of the item back — see
 |------|---------|
 | `attach_document(identifier, source, title, doc_type="manual", primary=False)` | Attach a file (local **path or http(s) URL**) to an item, or to a location by name as a fallback. `doc_type` e.g. manual/receipt/warranty/photo; `primary=True` makes a photo the entity's primary image (e.g. a location's "this is the spot" wayfinding shot). |
 | `list_attachments(identifier)` | List an item's or location's attachments **with their ids** (the handle the other attachment tools need). |
-| `get_attachment(identifier, attachment_id, save_to)` | Download one attachment to a local path so its content (e.g. a manual) can be read. |
+| `get_attachment(identifier, attachment_id, save_to?)` | Download one attachment to a local path so its content (e.g. a manual) can be read. `save_to` omitted = per-user cache dir (`~/.cache/homebox-mcp/photos`, override with `HOMEBOX_PHOTO_DIR`). |
+| `view_photos(identifier, save_to?)` | Download **all photo attachments** of an item/location to local files and return their paths — so the agent can actually see them (e.g. via vision) before renaming or describing them. HEIC/HEIF is re-encoded to JPEG on download. |
 | `rename_attachment(identifier, attachment_id, title?, doc_type?, primary?)` | Update an attachment's title, type, or primary flag. |
 
 > Uploads auto-convert HEIC/HEIF (iPhone photos) to JPEG so Homebox always

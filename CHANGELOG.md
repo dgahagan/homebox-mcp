@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `view_photos(identifier, save_to?)` tool: downloads **all photo attachments**
+  of an item/location to local files (HEIC/HEIF re-encoded to JPEG) and returns
+  their paths — so the agent can actually see them (e.g. via a vision model)
+  before renaming or describing them.
+- `get_attachment`'s `save_to` is now optional; omitted = per-user cache dir
+  (`~/.cache/homebox-mcp/photos`, override with `HOMEBOX_PHOTO_DIR`).
+
+### Changed
+- `get_item` also returns `description`, `insured`, `archived` and
+  `warrantyDetails`.
+
 ## [1.4.0] - 2026-10-25
 
 ### Changed

@@ -903,13 +903,21 @@ def _find_attachment(entity: dict, attachment_id: str) -> Optional[dict]:
     return None
 
 
+def _photo_cache_dir() -> Path:
+    """Default download dir for photos/attachments (override with HOMEBOX_PHOTO_DIR)."""
+    d = os.environ.get("HOMEBOX_PHOTO_DIR", "").strip()
+    return Path(d).expanduser() if d else Path.home() / ".cache" / "homebox-mcp" / "photos"
+
+
 @mcp.tool()
 @_tool_errors
-def get_attachment(identifier: str, attachment_id: str, save_to: str) -> dict:
+def get_attachment(identifier: str, attachment_id: str, save_to: Optional[str] = None) -> dict:
     """Download one attachment (see list_attachments for ids) to a local path,
     so its content — e.g. an attached manual or receipt — can be read.
     `save_to` is a directory (keeps a name based on the title) or a full file
-    path."""
+    path; omitted = a per-user cache dir."""
+    if save_to is None:
+        save_to = str(_photo_cache_dir())
     e = _resolve_any(identifier)
     if not e:
         raise ToolError(f"no item or location found matching '{identifier}'")
@@ -931,6 +939,56 @@ def get_attachment(identifier: str, attachment_id: str, save_to: str) -> dict:
     dest.write_bytes(r.content)
     return {"ok": True, "path": str(dest), "bytes": len(r.content),
             "mimeType": (r.headers.get("content-type") or "").split(";")[0]}
+
+
+_IMG_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+            "image/webp": ".webp", "image/heic": ".heic", "image/heif": ".heif"}
+
+
+@mcp.tool(annotations=_READONLY)
+@_tool_errors
+def view_photos(identifier: str, save_to: Optional[str] = None) -> dict:
+    """Download all photo attachments of an item/location to local files and
+    return their paths — so the agent can actually SEE them (e.g. via vision)
+    before renaming or describing them. `save_to` is a directory; omitted = a
+    per-user cache dir keyed by entity id."""
+    e = _resolve_any(identifier)
+    if not e:
+        raise ToolError(f"no item or location found matching '{identifier}'")
+    base = Path(save_to).expanduser() if save_to else _photo_cache_dir() / e["id"]
+    photos, errors = [], []
+    for a in e.get("attachments") or []:
+        ctype_hint = (a.get("mimeType") or "").lower()
+        if not (a.get("type") == "photo" or ctype_hint.startswith("image/")):
+            continue
+        aid = a.get("id")
+        r = _client.get(f"/entities/{e['id']}/attachments/{aid}")
+        r.raise_for_status()
+        content_type = (r.headers.get("content-type") or "").split(";")[0]
+        ext = _IMG_EXT.get(content_type) or mimetypes.guess_extension(content_type) or ".bin"
+        dest = base / f"{aid}{ext}"
+        # HEIC/HEIF doesn't open in most vision tools — re-encode to JPEG.
+        if "heic" in content_type or "heif" in content_type:
+            try:
+                _, content, _ = _heic_to_jpeg(dest.name, r.content, content_type)
+                dest = base / f"{aid}.jpg"
+            except Exception as ex:  # keep the original if conversion fails
+                errors.append(f"{aid}: HEIC conversion failed ({ex})")
+                content = r.content
+        else:
+            content = r.content
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+        photos.append({
+            "id": aid,
+            "title": a.get("title"),
+            "primary": bool(a.get("primary")),
+            "mimeType": content_type,
+            "bytes": len(content),
+            "path": str(dest),
+        })
+    return {"ok": True, "entity": e.get("name"), "count": len(photos),
+            "photos": photos, **({"errors": errors} if errors else {})}
 
 
 @mcp.tool(annotations=_IDEMPOTENT)
