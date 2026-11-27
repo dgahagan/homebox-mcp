@@ -502,9 +502,9 @@ def search_items(
 @_tool_errors
 def get_item(identifier: str) -> dict:
     """Get full detail for one item by assetId (e.g. 000-028), alias custom
-    field, or name (fuzzy fallback: first keyword match). Includes location
-    path, serial, model, purchase, warranty, custom fields, tags, and
-    attachments."""
+    field, or name (fuzzy fallback: first keyword match). Includes description,
+    location path, serial, model, purchase, warranty, insured/archived status,
+    custom fields, tags, and attachments."""
     e = _resolve_fuzzy(identifier)
     if not e:
         return {"error": f"no item found matching '{identifier}'"}
@@ -512,16 +512,20 @@ def get_item(identifier: str) -> dict:
         "id": e.get("id"),
         "assetId": e.get("assetId") or None,
         "name": e.get("name"),
+        "description": e.get("description") or None,
         "location_path": _location_path(e["id"]) or None,
         "manufacturer": e.get("manufacturer") or None,
         "modelNumber": e.get("modelNumber") or None,
         "serialNumber": e.get("serialNumber") or None,
         "quantity": e.get("quantity"),
+        "insured": e.get("insured"),
+        "archived": e.get("archived"),
         "purchasePrice": e.get("purchasePrice") or None,
         "purchaseDate": e.get("purchaseDate") or None,
         "purchaseFrom": e.get("purchaseFrom") or None,
         "warrantyExpires": e.get("warrantyExpires") or None,
         "lifetimeWarranty": e.get("lifetimeWarranty") or None,
+        "warrantyDetails": e.get("warrantyDetails") or None,
         "notes": e.get("notes") or None,
         "tags": [t.get("name") for t in e.get("tags") or []] or None,
         "fields": {f.get("name"): _field_value(f) for f in e.get("fields") or []} or None,
